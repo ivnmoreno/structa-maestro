@@ -11,13 +11,7 @@ import docx
 import pytest
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
-CONTRACT_SCHEMA_PATH = (
-    Path(__file__).parent.parent
-    / "specs"
-    / "001-structured-extraction-mvp"
-    / "contracts"
-    / "canonical-output-contract.schema.json"
-)
+CONTRACT_SCHEMA_PATH = FIXTURES_DIR / "schemas" / "canonical-output-contract.v1.0.schema.json"
 
 
 def create_minimal_pdf(path: Path, pages: list[str]) -> Path:
