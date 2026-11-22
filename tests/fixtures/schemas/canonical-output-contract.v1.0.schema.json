@@ -1,0 +1,257 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://structa-maestro.dev/contracts/canonical-output-record/v1.0.schema.json",
+  "title": "structa-maestro Canonical Output Record Contract v1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "extraction_id",
+    "status",
+    "source",
+    "schema",
+    "records",
+    "validation",
+    "errors",
+    "warnings"
+  ],
+  "properties": {
+    "contract_version": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "extraction_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "$ref": "#/$defs/ProcessingStatus"
+    },
+    "source": {
+      "oneOf": [
+        { "$ref": "#/$defs/SourceMetadata" },
+        { "type": "null" }
+      ]
+    },
+    "schema": {
+      "$ref": "#/$defs/SchemaMetadata"
+    },
+    "records": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ExtractedRecord"
+      }
+    },
+    "validation": {
+      "$ref": "#/$defs/ValidationOutcome"
+    },
+    "errors": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/DiagnosticIssue"
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/DiagnosticIssue"
+      }
+    }
+  },
+  "$defs": {
+    "ProcessingStatus": {
+      "type": "string",
+      "enum": ["completed", "partial", "failed"]
+    },
+    "ValidationStatus": {
+      "type": "string",
+      "enum": ["valid", "invalid", "not_validated"]
+    },
+    "FieldPresence": {
+      "type": "string",
+      "enum": ["present", "missing"]
+    },
+    "EvidenceRelationship": {
+      "type": "string",
+      "enum": ["direct", "inferred", "conflicting", "unverified"]
+    },
+    "IssueSeverity": {
+      "type": "string",
+      "enum": ["error", "warning"]
+    },
+    "PipelineStage": {
+      "type": "string",
+      "enum": [
+        "input",
+        "document_processing",
+        "schema",
+        "extraction",
+        "provenance",
+        "validation",
+        "serialization"
+      ]
+    },
+    "SourceMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["document_id"],
+      "properties": {
+        "document_id": { "type": "string", "minLength": 1 },
+        "filename": { "type": ["string", "null"] },
+        "media_type": { "type": ["string", "null"] }
+      }
+    },
+    "SchemaMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_id", "schema_version"],
+      "properties": {
+        "schema_id": { "type": "string", "minLength": 1 },
+        "schema_version": { "type": "string", "minLength": 1 }
+      }
+    },
+    "SourceLocation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "page": { "type": ["integer", "null"], "minimum": 1 },
+        "paragraph": { "type": ["integer", "null"], "minimum": 1 },
+        "line_start": { "type": ["integer", "null"], "minimum": 1 },
+        "line_end": { "type": ["integer", "null"], "minimum": 1 },
+        "char_start": { "type": ["integer", "null"], "minimum": 0 },
+        "char_end": { "type": ["integer", "null"], "minimum": 0 },
+        "section": { "type": ["string", "null"] }
+      }
+    },
+    "ProvenanceEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_document_id", "evidence", "relationship", "truncated"],
+      "properties": {
+        "source_document_id": { "type": "string", "minLength": 1 },
+        "location": {
+          "oneOf": [
+            { "$ref": "#/$defs/SourceLocation" },
+            { "type": "null" }
+          ]
+        },
+        "evidence": { "type": "string" },
+        "relationship": { "$ref": "#/$defs/EvidenceRelationship" },
+        "truncated": { "type": "boolean", "default": false }
+      }
+    },
+    "ConfidenceAssessment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "scale", "method", "calibrated"],
+      "properties": {
+        "value": { "type": ["number", "null"] },
+        "scale": { "type": "string", "minLength": 1 },
+        "method": { "type": "string", "minLength": 1 },
+        "calibrated": { "type": "boolean" }
+      }
+    },
+    "DiagnosticIssue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "severity", "stage", "message"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "severity": { "$ref": "#/$defs/IssueSeverity" },
+        "stage": { "$ref": "#/$defs/PipelineStage" },
+        "message": { "type": "string", "minLength": 1 },
+        "record_id": { "type": ["string", "null"] },
+        "field_path": { "type": ["string", "null"] },
+        "expected": { "type": ["string", "null"] },
+        "actual": { "type": ["string", "null"] }
+      }
+    },
+    "ValidationOutcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "errors"],
+      "properties": {
+        "status": { "$ref": "#/$defs/ValidationStatus" },
+        "errors": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DiagnosticIssue"
+          }
+        }
+      }
+    },
+    "ExtractedField": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "presence",
+        "value",
+        "confidence",
+        "provenance",
+        "validation",
+        "errors",
+        "warnings"
+      ],
+      "properties": {
+        "presence": { "$ref": "#/$defs/FieldPresence" },
+        "value": {},
+        "value_type": {
+          "type": ["string", "null"],
+          "enum": ["string", "integer", "decimal", "boolean", "date", "array", "object", null]
+        },
+        "confidence": {
+          "oneOf": [
+            { "$ref": "#/$defs/ConfidenceAssessment" },
+            { "type": "null" }
+          ]
+        },
+        "provenance": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ProvenanceEvidence"
+          }
+        },
+        "validation": { "$ref": "#/$defs/ValidationOutcome" },
+        "errors": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/DiagnosticIssue" }
+        },
+        "warnings": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/DiagnosticIssue" }
+        }
+      }
+    },
+    "ExtractedRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "record_id",
+        "status",
+        "fields",
+        "validation",
+        "errors",
+        "warnings"
+      ],
+      "properties": {
+        "record_id": { "type": "string", "minLength": 1 },
+        "status": { "$ref": "#/$defs/ProcessingStatus" },
+        "fields": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/ExtractedField"
+          }
+        },
+        "validation": { "$ref": "#/$defs/ValidationOutcome" },
+        "errors": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/DiagnosticIssue" }
+        },
+        "warnings": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/DiagnosticIssue" }
+        }
+      }
+    }
+  }
+}
