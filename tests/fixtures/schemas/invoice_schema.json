@@ -1,0 +1,45 @@
+{
+  "schema_id": "invoice-schema",
+  "schema_version": "1.0",
+  "cardinality": "single",
+  "allow_additional_fields": false,
+  "fields": {
+    "invoice_number": {
+      "type": "string",
+      "required": true,
+      "min_length": 3,
+      "max_length": 64,
+      "pattern": "^INV-[0-9]{4}-[0-9]{3,}$",
+      "description": "Unique invoice identifier"
+    },
+    "vendor_name": {
+      "type": "string",
+      "required": true,
+      "min_length": 1,
+      "description": "Supplier or vendor name"
+    },
+    "issue_date": {
+      "type": "date",
+      "required": true,
+      "description": "Invoice issue date in ISO-8601 YYYY-MM-DD format"
+    },
+    "total_amount": {
+      "type": "decimal",
+      "required": true,
+      "min_value": 0,
+      "description": "Total payable amount"
+    },
+    "currency": {
+      "type": "string",
+      "required": true,
+      "allowed_values": ["USD", "EUR", "GBP"],
+      "description": "Three-letter ISO currency code"
+    },
+    "notes": {
+      "type": "string",
+      "required": false,
+      "nullable": true,
+      "description": "Optional invoice remarks"
+    }
+  }
+}

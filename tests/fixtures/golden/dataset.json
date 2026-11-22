@@ -1,0 +1,179 @@
+{
+  "dataset_version": "1.0.0",
+  "description": "Curated synthetic golden evaluation dataset across 5 business categories and 3 formats (TXT, PDF, DOCX).",
+  "cases": [
+    {
+      "case_id": "inv-txt-001",
+      "category": "invoices",
+      "format": "txt",
+      "content_lines": [
+        "Invoice Number: INV-2026-101",
+        "Vendor: Northwind Industrial Ltd.",
+        "Issue Date: 2026-04-01",
+        "Total Amount: 2450.00",
+        "Currency: USD"
+      ],
+      "schema": {
+        "schema_id": "invoice-schema",
+        "schema_version": "1.0",
+        "cardinality": "single",
+        "fields": {
+          "invoice_number": {"type": "string", "required": true},
+          "vendor_name": {"type": "string", "required": true},
+          "issue_date": {"type": "date", "required": true},
+          "total_amount": {"type": "decimal", "required": true, "min_value": 0},
+          "currency": {"type": "string", "required": true, "allowed_values": ["USD", "EUR", "GBP"]},
+          "notes": {"type": "string", "required": false}
+        }
+      },
+      "expected_status": "completed",
+      "expected_validation": "valid",
+      "expected_records": [
+        {
+          "fields": {
+            "invoice_number": {"presence": "present", "value": "INV-2026-101", "evidence": "Invoice Number: INV-2026-101"},
+            "vendor_name": {"presence": "present", "value": "Northwind Industrial Ltd.", "evidence": "Vendor: Northwind Industrial Ltd."},
+            "issue_date": {"presence": "present", "value": "2026-04-01", "evidence": "Issue Date: 2026-04-01"},
+            "total_amount": {"presence": "present", "value": "2450.00", "evidence": "Total Amount: 2450.00"},
+            "currency": {"presence": "present", "value": "USD", "evidence": "Currency: USD"},
+            "notes": {"presence": "missing", "value": null}
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "contract-pdf-001",
+      "category": "contracts",
+      "format": "pdf",
+      "content_lines": [
+        "Contract ID: CTR-2026-88",
+        "Party A: Meridian Logistics GmbH",
+        "Party B: Alpine Cloud Services AG",
+        "Effective Date: 2026-05-01"
+      ],
+      "schema": {
+        "schema_id": "contract-schema",
+        "schema_version": "1.0",
+        "cardinality": "single",
+        "fields": {
+          "contract_id": {"type": "string", "required": true},
+          "party_a": {"type": "string", "required": true},
+          "party_b": {"type": "string", "required": true},
+          "effective_date": {"type": "date", "required": true},
+          "termination_fee": {"type": "decimal", "required": false}
+        }
+      },
+      "expected_status": "completed",
+      "expected_validation": "valid",
+      "expected_records": [
+        {
+          "fields": {
+            "contract_id": {"presence": "present", "value": "CTR-2026-88", "evidence": "Contract ID: CTR-2026-88"},
+            "party_a": {"presence": "present", "value": "Meridian Logistics GmbH", "evidence": "Party A: Meridian Logistics GmbH"},
+            "party_b": {"presence": "present", "value": "Alpine Cloud Services AG", "evidence": "Party B: Alpine Cloud Services AG"},
+            "effective_date": {"presence": "present", "value": "2026-05-01", "evidence": "Effective Date: 2026-05-01"},
+            "termination_fee": {"presence": "missing", "value": null}
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "employment-docx-001",
+      "category": "employment_documents",
+      "format": "docx",
+      "content_lines": [
+        "Employee Name: Elena Vance",
+        "Position: Senior Data Engineer",
+        "Employer: Helvetia Analytics",
+        "Start Date: 2026-06-01"
+      ],
+      "schema": {
+        "schema_id": "employment-schema",
+        "schema_version": "1.0",
+        "cardinality": "single",
+        "fields": {
+          "employee_name": {"type": "string", "required": true},
+          "position": {"type": "string", "required": true},
+          "employer": {"type": "string", "required": true},
+          "start_date": {"type": "date", "required": true}
+        }
+      },
+      "expected_status": "completed",
+      "expected_validation": "valid",
+      "expected_records": [
+        {
+          "fields": {
+            "employee_name": {"presence": "present", "value": "Elena Vance", "evidence": "Employee Name: Elena Vance"},
+            "position": {"presence": "present", "value": "Senior Data Engineer", "evidence": "Position: Senior Data Engineer"},
+            "employer": {"presence": "present", "value": "Helvetia Analytics", "evidence": "Employer: Helvetia Analytics"},
+            "start_date": {"presence": "present", "value": "2026-06-01", "evidence": "Start Date: 2026-06-01"}
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "application-txt-missing-req",
+      "category": "applications",
+      "format": "txt",
+      "content_lines": [
+        "Applicant: Marcus Thorne",
+        "Program: Research Fellowship"
+      ],
+      "schema": {
+        "schema_id": "application-schema",
+        "schema_version": "1.0",
+        "cardinality": "single",
+        "fields": {
+          "applicant_name": {"type": "string", "required": true},
+          "program": {"type": "string", "required": true},
+          "national_id": {"type": "string", "required": true}
+        }
+      },
+      "expected_status": "completed",
+      "expected_validation": "invalid",
+      "expected_records": [
+        {
+          "fields": {
+            "applicant_name": {"presence": "present", "value": "Marcus Thorne", "evidence": "Applicant: Marcus Thorne"},
+            "program": {"presence": "present", "value": "Research Fellowship", "evidence": "Program: Research Fellowship"},
+            "national_id": {"presence": "missing", "value": null}
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "correspondence-docx-001",
+      "category": "correspondence",
+      "format": "docx",
+      "content_lines": [
+        "From: Legal Compliance Office",
+        "To: Operations Directorate",
+        "Date: 2026-07-12",
+        "Subject: Annual Audit Confirmation"
+      ],
+      "schema": {
+        "schema_id": "correspondence-schema",
+        "schema_version": "1.0",
+        "cardinality": "single",
+        "fields": {
+          "sender": {"type": "string", "required": true},
+          "recipient": {"type": "string", "required": true},
+          "sent_date": {"type": "date", "required": true},
+          "subject": {"type": "string", "required": true}
+        }
+      },
+      "expected_status": "completed",
+      "expected_validation": "valid",
+      "expected_records": [
+        {
+          "fields": {
+            "sender": {"presence": "present", "value": "Legal Compliance Office", "evidence": "From: Legal Compliance Office"},
+            "recipient": {"presence": "present", "value": "Operations Directorate", "evidence": "To: Operations Directorate"},
+            "sent_date": {"presence": "present", "value": "2026-07-12", "evidence": "Date: 2026-07-12"},
+            "subject": {"presence": "present", "value": "Annual Audit Confirmation", "evidence": "Subject: Annual Audit Confirmation"}
+          }
+        }
+      ]
+    }
+  ]
+}

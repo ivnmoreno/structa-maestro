@@ -1487,3 +1487,70 @@ The division should be:
 **Strongest recommendation:** make the canonical output contract, provenance integrity, validation semantics, and extraction accuracy four independently tested pillars.
 
 That distinction will make structa-maestro much more credible as an engineering project than simply demonstrating that it can turn a PDF into JSON.
+
+
+# **20. Continuous Integration Rules, Workflow Architecture, and Release Gates**
+
+CI is an explicit engineering requirement for `structa-maestro`. Passing tests alone is not sufficient; CI must verify formatting, linting, static typing, security, packaging, clean installation, public contract conformance, and regression stability.
+
+## **20.1 Mandatory CI Rules**
+
+| ID | Rule | Enforcement |
+| --- | --- | --- |
+| CI-001 | Every pull request targeting `main` must trigger CI | GitHub Actions |
+| CI-002 | Every push to `main` must trigger CI | GitHub Actions |
+| CI-003 | All unit tests must pass | `pytest` |
+| CI-004 | All contract tests must pass | `pytest` |
+| CI-005 | All required integration tests must pass | `pytest` |
+| CI-006 | Minimum 80% overall test coverage | `pytest-cov` |
+| CI-007 | Critical contract invariants must be tested | Dedicated contract-invariant suite |
+| CI-008 | Code must comply with formatting rules | `ruff format --check` |
+| CI-009 | Code must pass linting | `ruff check` |
+| CI-010 | Production code must pass static type checking | `mypy` |
+| CI-011 | Security checks must pass | Ruff security rules (`S`) / Bandit |
+| CI-012 | Dependencies must be checked for known vulnerabilities | `pip-audit` |
+| CI-013 | No committed secrets or credentials | Secret scanning |
+| CI-014 | Package must build successfully (wheel + sdist) | `build` + `twine check` |
+| CI-015 | Package must install cleanly in an isolated virtual environment | Installation smoke test |
+| CI-016 | Public API imports must work | Import smoke tests |
+| CI-017 | Supported Python versions must pass the test matrix | GitHub Actions matrix |
+| CI-018 | Golden dataset regression must not introduce unexplained critical regressions | Evaluation suite |
+| CI-019 | Release artifacts must pass full qualification validation | Release workflow |
+| CI-020 | Documentation examples must remain executable where practical | Documentation tests |
+
+Any failed mandatory check MUST block merging into `main`.
+
+## **20.2 GitHub Actions Workflow Architecture**
+
+```text
+.github/
+└── workflows/
+    ├── ci.yml
+    ├── security.yml
+    ├── evaluation.yml
+    ├── compatibility.yml
+    └── release.yml
+```
+
+| Workflow | Trigger | Responsibility |
+| --- | --- | --- |
+| `ci.yml` | Push to `main`, pull request to `main`, manual dispatch | Core quality gates (formatting, lint, security lint, mypy, pytest + >=80% coverage, build + `twine check` + clean wheel install smoke test) |
+| `security.yml` | Pull request, scheduled run | Dependency vulnerability checks (`pip-audit`), static security analysis, secret scanning |
+| `evaluation.yml` | Pull request, scheduled run, manual dispatch | Golden dataset evaluation and regression reporting |
+| `compatibility.yml` | Pull request, release | Supported Python version matrix and packaging/installation compatibility |
+| `release.yml` | Version tag, manual validation | Full release qualification, artifact verification, and publishing |
+
+## **20.3 CI Security Hardening**
+
+- Pin third-party GitHub Actions to verified commit SHAs in production workflows rather than mutable version tags.
+- Declare minimal explicit `permissions` (default `contents: read`).
+- Never expose publishing credentials or privileged secrets to untrusted pull-request code; do not run untrusted PR code under privileged `pull_request_target` workflows.
+- Use concurrency groups (`cancel-in-progress: true`) on non-release workflows to prevent redundant queue buildup.
+
+## **20.4 Branch Protection Rules (`main`)**
+
+- Require pull requests before merging and restrict direct pushes where practical.
+- Require collaborator approval where collaborators are involved.
+- Require all mandatory CI status checks to pass and require branches to be up to date prior to merging.
+- Do not configure optional or conditionally skipped workflows as required checks (skipped checks can report green).
+- Require conversation resolution, block force pushes, and block branch deletion.

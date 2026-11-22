@@ -1,0 +1,111 @@
+"""Cross-format consistency tests across semantically equivalent TXT, PDF, and DOCX files."""
+
+from __future__ import annotations
+
+import re
+from datetime import date
+from decimal import Decimal
+from pathlib import Path
+from typing import Any
+
+from conftest import create_minimal_docx, create_minimal_pdf
+from structa_maestro import (
+    DeterministicTestStrategy,
+    ExtractionSchema,
+    FieldPresence,
+    ProcessingStatus,
+    ProposedEvidence,
+    ProposedField,
+    ProposedRecord,
+    StrategyOutput,
+    ValidationStatus,
+    extract,
+)
+from structa_maestro.documents.models import PreparedDocument
+
+
+def _regex_invoice_handler(doc: PreparedDocument, schema: ExtractionSchema) -> StrategyOutput:
+    text = doc.full_text
+    inv = re.search(r"Invoice Number:\s*(INV-\d{4}-\d+)", text)
+    vendor = re.search(r"Vendor:\s*([^\n]+)", text)
+    dt = re.search(r"Issue Date:\s*(\d{4}-\d{2}-\d{2})", text)
+    amt = re.search(r"Total Amount:\s*([0-9]+\.[0-9]+)", text)
+    cur = re.search(r"Currency:\s*([A-Z]{3})", text)
+    assert inv and vendor and dt and amt and cur
+    return StrategyOutput(
+        records=(
+            ProposedRecord(
+                fields={
+                    "invoice_number": ProposedField(
+                        presence=FieldPresence.PRESENT,
+                        value=inv.group(1),
+                        confidence=0.95,
+                        evidence=(ProposedEvidence(quote=inv.group(0)),),
+                    ),
+                    "vendor_name": ProposedField(
+                        presence=FieldPresence.PRESENT,
+                        value=vendor.group(1).strip(),
+                        confidence=0.93,
+                        evidence=(ProposedEvidence(quote=vendor.group(0)),),
+                    ),
+                    "issue_date": ProposedField(
+                        presence=FieldPresence.PRESENT,
+                        value=date.fromisoformat(dt.group(1)),
+                        confidence=0.94,
+                        evidence=(ProposedEvidence(quote=dt.group(0)),),
+                    ),
+                    "total_amount": ProposedField(
+                        presence=FieldPresence.PRESENT,
+                        value=Decimal(amt.group(1)),
+                        confidence=0.96,
+                        evidence=(ProposedEvidence(quote=amt.group(0)),),
+                    ),
+                    "currency": ProposedField(
+                        presence=FieldPresence.PRESENT,
+                        value=cur.group(1),
+                        confidence=0.99,
+                        evidence=(ProposedEvidence(quote=cur.group(0)),),
+                    ),
+                }
+            ),
+        )
+    )
+
+
+def test_equivalent_txt_pdf_docx_produce_identical_field_values(
+    tmp_path: Path, invoice_schema_dict: dict[str, Any]
+) -> None:
+    lines = [
+        "Invoice Number: INV-2026-001",
+        "Vendor: Acme Industrial Supply Ltd.",
+        "Issue Date: 2026-03-15",
+        "Total Amount: 1250.50",
+        "Currency: USD",
+    ]
+    txt_path = tmp_path / "inv.txt"
+    txt_path.write_text("\n".join(lines), encoding="utf-8")
+    pdf_path = create_minimal_pdf(tmp_path / "inv.pdf", ["\n".join(lines)])
+    docx_path = create_minimal_docx(tmp_path / "inv.docx", paragraphs=lines)
+
+    strategy = DeterministicTestStrategy(_regex_invoice_handler)
+    r_txt = extract(txt_path, invoice_schema_dict, strategy=strategy, document_id="doc-txt")
+    r_pdf = extract(pdf_path, invoice_schema_dict, strategy=strategy, document_id="doc-pdf")
+    r_docx = extract(docx_path, invoice_schema_dict, strategy=strategy, document_id="doc-docx")
+
+    for res in (r_txt, r_pdf, r_docx):
+        assert res.status == ProcessingStatus.COMPLETED
+        assert res.validation.status == ValidationStatus.VALID
+
+    for field_name in ("invoice_number", "vendor_name", "issue_date", "total_amount", "currency"):
+        v_txt = r_txt.records[0].fields[field_name].value
+        v_pdf = r_pdf.records[0].fields[field_name].value
+        v_docx = r_docx.records[0].fields[field_name].value
+        assert v_txt == v_pdf == v_docx
+
+    # Format-specific location precision preserved honestly
+    assert r_txt.records[0].fields["invoice_number"].provenance[0].location is not None
+    assert r_txt.records[0].fields["invoice_number"].provenance[0].location.line_start == 1
+    assert r_pdf.records[0].fields["invoice_number"].provenance[0].location is not None
+    assert r_pdf.records[0].fields["invoice_number"].provenance[0].location.page == 1
+    assert r_docx.records[0].fields["invoice_number"].provenance[0].location is not None
+    assert r_docx.records[0].fields["invoice_number"].provenance[0].location.paragraph == 1
