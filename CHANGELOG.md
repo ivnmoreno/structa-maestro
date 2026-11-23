@@ -7,6 +7,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ## [Unreleased]
 
 ### Added
+- **Stateless Batch Document Extraction (`extract_batch`, `extract-batch`)**:
+  - Added stateless in-process batch orchestration (`extract_batch`, `ExtractionEngine.extract_batch`) with immutable models (`BatchDocumentInput`, `BatchOptions`, `BatchSummary`, `BatchExtractionResult`), eager pre-flight validation, exact input-order preservation, and lossless `to_jsonl()`, `to_dict()`, and `to_json()` helpers preserving Canonical Output Record Contract `v1.0` per item.
+  - Added bounded in-process concurrency (`max_workers` in `1..32`, default `1`) using a bounded sliding-window worker pool with strict cross-document isolation, default continue-on-error fault isolation, and optional `fail_fast` stopping with honest `skipped_documents` / `aborted_early` accounting.
+  - Added thin `structa-maestro extract-batch` CLI subcommand with safe deterministic directory discovery (`--recursive`, hidden/broken-symlink filtering, `followlinks=False`), compact Contract `v1.0` JSONL streaming, optional `--summary-json`, exit codes `0`/`2`/`1`, and runnable example `examples/batch_extraction_example.py`.
 - **Cross-Field & Conditional Validation (`ExtractionSchema.rules`, `DeterministicValidator`)**:
   - Declarative, immutable intra-record validation rules (`ComparisonRule`, `ArithmeticRule`, `ArithmeticTerm`, `FieldCondition`, `ConditionalPresenceRule`, `GroupPresenceRule`) supporting field-to-field comparisons (`eq`, `ne`, `lt`, `lte`, `gt`, `gte`), exact `Decimal` arithmetic balances and nested array collection sums with optional tolerance and `treat_missing_as_zero`, conditional presence (`required_if`, `forbidden_if`), and group constraints (`mutually_exclusive`, `at_least_one_of`).
   - Eager schema-load validation rejecting unknown field paths, incompatible types, duplicate rule IDs, negative tolerances, and unknown rule attributes with `SchemaDefinitionError` (zero arbitrary code execution / `eval`).

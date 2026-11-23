@@ -215,3 +215,156 @@ def test_cli_llm_hardening_flags_and_validation(
     assert strat_obj.retry_policy.max_retries == 4
     assert strat_obj.input_budget.max_input_chars == 8000
     assert strat_obj.input_budget.overflow_policy.value == "truncate"
+
+
+def test_cli_extract_batch_directory_jsonl_summary_and_exit_codes(
+    fixtures_dir: Path,
+    tmp_path: Path,
+    contract_json_schema: dict[str, Any],
+    monkeypatch: Any,
+) -> None:
+    schema_path = fixtures_dir / "schemas" / "invoice_schema.json"
+    batch_dir = tmp_path / "batch_in"
+    nested = batch_dir / "nested"
+    nested.mkdir(parents=True)
+    (batch_dir / "01.txt").write_text("Invoice Number: INV-2026-001\n", encoding="utf-8")
+    (batch_dir / "02.txt").write_text("Invoice Number: INV-2026-002\n", encoding="utf-8")
+    (nested / "03.txt").write_text("Invoice Number: INV-2026-003\n", encoding="utf-8")
+    (batch_dir / "ignore.md").write_text("# ignored\n", encoding="utf-8")
+
+    ok_strat = DeterministicTestStrategy(
+        StrategyOutput(
+            records=(
+                ProposedRecord(
+                    fields={
+                        "invoice_number": ProposedField(value="INV-2026-001"),
+                        "vendor_name": ProposedField(value="Acme"),
+                        "issue_date": ProposedField(value=date(2026, 3, 15)),
+                        "total_amount": ProposedField(value=Decimal("100.00")),
+                        "currency": ProposedField(value="USD"),
+                    }
+                ),
+            )
+        )
+    )
+
+    # 1. Non-recursive directory -> 2 lines to --output + --summary-json -> exit 0
+    out_jsonl = tmp_path / "out.jsonl"
+    sum_json = tmp_path / "summary.json"
+    code_0 = run_cli(
+        [
+            "extract-batch",
+            str(batch_dir),
+            "--schema",
+            str(schema_path),
+            "--max-workers",
+            "2",
+            "--output",
+            str(out_jsonl),
+            "--summary-json",
+            str(sum_json),
+        ],
+        stdout=io.StringIO(),
+        stderr=io.StringIO(),
+        strategy_override=ok_strat,
+    )
+    assert code_0 == 0
+    lines = out_jsonl.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 2
+    for line in lines:
+        jsonschema.validate(instance=json.loads(line), schema=contract_json_schema)
+    summary_data = json.loads(sum_json.read_text(encoding="utf-8"))
+    assert summary_data["total_documents"] == 2
+    assert summary_data["completed_count"] == 2
+    assert summary_data["valid_count"] == 2
+
+    # 2. --recursive includes nested/03.txt -> 3 lines on stdout -> exit 0
+    stdout_rec = io.StringIO()
+    code_rec = run_cli(
+        ["extract-batch", str(batch_dir), "--schema", str(schema_path), "--recursive"],
+        stdout=stdout_rec,
+        stderr=io.StringIO(),
+        strategy_override=ok_strat,
+    )
+    assert code_rec == 0
+    assert len(stdout_rec.getvalue().splitlines()) == 3
+
+    # 3. Explicit nonexistent file alongside valid file -> canonical failed JSONL + exit 2
+    stdout_mix = io.StringIO()
+    code_2 = run_cli(
+        [
+            "extract-batch",
+            str(batch_dir / "01.txt"),
+            str(tmp_path / "missing.txt"),
+            "--schema",
+            str(schema_path),
+            "--fail-fast",
+        ],
+        stdout=stdout_mix,
+        stderr=io.StringIO(),
+        strategy_override=ok_strat,
+    )
+    assert code_2 == 2
+    mix_lines = stdout_mix.getvalue().splitlines()
+    assert len(mix_lines) == 2
+    assert json.loads(mix_lines[0])["status"] == "completed"
+    assert json.loads(mix_lines[1])["status"] == "failed"
+
+    # 4. Empty directory -> exit 1
+    empty_dir = tmp_path / "empty"
+    empty_dir.mkdir()
+    err_empty = io.StringIO()
+    assert (
+        run_cli(
+            ["extract-batch", str(empty_dir), "--schema", str(schema_path)],
+            stdout=io.StringIO(),
+            stderr=err_empty,
+            strategy_override=ok_strat,
+        )
+        == 1
+    )
+    assert "No supported input documents" in err_empty.getvalue()
+
+    # 5. Identical --output and --summary-json paths -> exit 1
+    err_same = io.StringIO()
+    assert (
+        run_cli(
+            [
+                "extract-batch",
+                str(batch_dir),
+                "--schema",
+                str(schema_path),
+                "--output",
+                str(out_jsonl),
+                "--summary-json",
+                str(out_jsonl),
+            ],
+            stdout=io.StringIO(),
+            stderr=err_same,
+            strategy_override=ok_strat,
+        )
+        == 1
+    )
+    assert "same file" in err_same.getvalue()
+
+    # 6. Invalid --max-workers & missing API key -> exit 1
+    assert (
+        run_cli(
+            ["extract-batch", str(batch_dir), "--schema", str(schema_path), "--max-workers", "0"],
+            stdout=io.StringIO(),
+            stderr=io.StringIO(),
+            strategy_override=ok_strat,
+        )
+        == 1
+    )
+    monkeypatch.delenv("STRUCTA_MAESTRO_API_KEY", raising=False)
+    err_key = io.StringIO()
+    assert (
+        run_cli(
+            ["extract-batch", str(batch_dir), "--schema", str(schema_path)],
+            stdout=io.StringIO(),
+            stderr=err_key,
+        )
+        == 1
+    )
+    assert "STRUCTA_MAESTRO_API_KEY" in err_key.getvalue()
