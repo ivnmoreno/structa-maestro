@@ -27,5 +27,19 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
-      - name: Run golden dataset regression suite
+      - name: Validate 50-case golden dataset manifest (CI-018)
+        run: python -m evals validate-dataset
+      - name: Run golden dataset regression suite (CI-018)
         run: pytest tests/evaluation/ -v
+      - name: Run offline baseline regression gate & render summary (CI-018)
+        run: |
+          python -m evals run \
+            --strategy deterministic \
+            --baseline evals/baselines/deterministic_v2.0.0.json \
+            --output-md eval-summary.md
+      - name: Publish evaluation summary to workflow step summary
+        if: always()
+        run: |
+          if [ -f eval-summary.md ]; then
+            cat eval-summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi

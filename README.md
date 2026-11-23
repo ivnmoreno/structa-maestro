@@ -142,6 +142,19 @@ Every extraction returns an immutable `ExtractionResult` supporting lossless rou
 
 ---
 
+## Golden Evaluation & Regression Suite
+
+Contributors can run the repository-internal 50-case golden evaluation harness offline without external API keys (excluded from published wheels and sdists):
+
+```bash
+python -m evals validate-dataset
+python -m evals run --strategy deterministic --baseline evals/baselines/deterministic_v2.0.0.json
+```
+
+See [docs/development.md](docs/development.md) for subset filtering, repeated-trial (`--trials`) distributions, differential strategy comparison (`python -m evals diff`), and on-demand live-model benchmarking.
+
+---
+
 ## Further Documentation
 
 - [Architecture](docs/architecture.md)

@@ -32,9 +32,9 @@ jobs:
       - name: Lint (CI-009)
         run: ruff check .
       - name: Security lint (CI-011)
-        run: ruff check --select S src/
+        run: ruff check --select S src/ evals/
       - name: Type checking (CI-010)
-        run: mypy src/
+        run: mypy src/ evals/
 
   tests:
     name: Automated Tests
