@@ -11,6 +11,7 @@ from typing import Any
 
 from structa_maestro.contracts.enums import ExtractionCardinality, FieldType
 from structa_maestro.exceptions import SchemaDefinitionError
+from structa_maestro.schema.rules import ValidationRule, validate_schema_rules
 
 _NUMERIC_TYPES = frozenset({FieldType.INTEGER, FieldType.DECIMAL})
 _DEFAULT_MAX_DEPTH = 16
@@ -162,6 +163,7 @@ class ExtractionSchema:
     cardinality: ExtractionCardinality = ExtractionCardinality.SINGLE
     allow_additional_fields: bool = False
     max_depth: int = _DEFAULT_MAX_DEPTH
+    rules: tuple[ValidationRule, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.schema_id, str) or not self.schema_id.strip():
@@ -185,6 +187,8 @@ class ExtractionSchema:
                     f"Schema field key {key!r} does not match FieldSpec.name {spec.name!r}."
                 )
             _validate_depth(spec, depth=1, max_depth=self.max_depth, seen_ids=set())
+
+        validate_schema_rules(self.fields, self.rules)
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> ExtractionSchema:

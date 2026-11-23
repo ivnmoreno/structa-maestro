@@ -106,6 +106,9 @@ class ResultBuilder:
             )
             if built.status != ProcessingStatus.COMPLETED:
                 any_record_partial_or_failed = True
+            for rec_warn in built.warnings:
+                if rec_warn.stage == PipelineStage.VALIDATION:
+                    result_warnings.append(rec_warn)
             built_records.append(built)
 
         overall_validation = self._validator.validate_result_cardinality(
@@ -172,6 +175,7 @@ class ResultBuilder:
             schema,
             record_id=record_id,
         )
+        record_warnings.extend(val_result.warnings)
 
         fields_map: dict[str, ExtractedField] = {}
         any_field_errors = False

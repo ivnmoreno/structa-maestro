@@ -14,6 +14,10 @@ All stable public symbols are exported from the top-level `structa_maestro` pack
 - `ExtractionSchema.from_json_file(path)` — loads a JSON schema file with duplicate-key rejection.
 - Programmatic classes: `ExtractionSchema`, `FieldSpec`, `FieldConstraints`, `FieldType`, `ExtractionCardinality`.
 - Default unexpected-field policy: `allow_additional_fields=False` (extra fields flagged as `unexpected_field` validation errors unless explicitly opted in).
+- **Declarative Cross-Field & Conditional Rules (`ExtractionSchema.rules`)**:
+  - Programmatic models: `ComparisonRule` (`ComparisonOperator`), `ArithmeticRule` + `ArithmeticTerm`, `ConditionalPresenceRule` (`ConditionalPresenceKind`) + `FieldCondition` (`ConditionOperator`), `GroupPresenceRule` (`GroupPresenceKind`), `RuleSeverity` (`error` / `warning`), `ValidationRule`.
+  - Declarative JSON `"rules"` array supporting `kind` values `"comparison"`, `"arithmetic"` (including nested array collection sums and optional `treat_missing_as_zero`), `"required_if"`, `"forbidden_if"`, `"mutually_exclusive"`, and `"at_least_one_of"`.
+  - Error-severity violations fail record-level and top-level `ValidationOutcome` (keeping per-field `validation` strictly single-field); warning-severity violations emit validation-stage warnings at record and top-level without invalidating `ValidationOutcome`. See [examples/cross_field_validation_example.py](../examples/cross_field_validation_example.py).
 
 ## Strategies & Reliability Policies
 
@@ -61,6 +65,17 @@ All stable public symbols are exported from the top-level `structa_maestro` pack
 | `provider_retry_succeeded` | `warning` | Extraction succeeded after one or more bounded retries following transient failures. |
 | `input_budget_exceeded` | `error` | Prepared document length exceeded `max_input_chars` under `overflow_policy="reject"` (zero outbound requests). |
 | `input_truncated` | `warning` | Prepared document was truncated on a clean boundary under `overflow_policy="truncate"` (`status="partial"`). |
+
+## Cross-Field Validation Diagnostic Codes (`PipelineStage.VALIDATION`)
+
+| Code | Rule Kind | Severity |
+| --- | --- | --- |
+| `cross_field_comparison_failed` | `ComparisonRule` | `error` or `warning` |
+| `cross_field_arithmetic_mismatch` | `ArithmeticRule` | `error` or `warning` |
+| `conditional_required_missing` | `ConditionalPresenceRule` (`required_if`) | `error` or `warning` |
+| `conditional_forbidden_present` | `ConditionalPresenceRule` (`forbidden_if`) | `error` or `warning` |
+| `mutually_exclusive_fields` | `GroupPresenceRule` (`mutually_exclusive`) | `error` or `warning` |
+| `missing_required_group` | `GroupPresenceRule` (`at_least_one_of`) | `error` or `warning` |
 
 ## Thin CLI (`structa-maestro`)
 

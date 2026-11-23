@@ -29,8 +29,9 @@ Document Path + ExtractionSchema
    - `ProvenanceAssociator`: verifies quotes against `PreparedDocument`, maps real locations,
      rejects cross-document links, detects direct value-evidence conflicts
    - `ConfidenceNormalizer`: enforces scale bounds and `calibrated=False`
-   - `DeterministicValidator`: strict non-coercing structural & constraint validation
-     (rejects unexpected extra fields by default)
+   - `DeterministicValidator`: strict non-coercing single-field, cross-field, and conditional
+     validation (rejects unexpected extra fields by default; exact decimal arithmetic &
+     declarative intra-record rules with configurable error/warning severity)
    - `ResultBuilder`: assembles immutable `ExtractionResult` v1.0 with honest status rules
         │
         ▼

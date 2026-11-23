@@ -146,3 +146,66 @@ def test_sch_017_to_028_invalid_schemas_raise_schema_definition_error(tmp_path: 
         ExtractionSchema.from_dict({})
     with pytest.raises(SchemaDefinitionError):
         ExtractionSchema.from_dict({"schema_id": "empty", "fields": {}})
+
+
+def test_declarative_cross_field_rules_loading_and_rejections(tmp_path: Path) -> None:
+    schema_file = tmp_path / "rules_schema.json"
+    schema_file.write_text(
+        """{
+            "schema_id": "rules-json",
+            "schema_version": "1.0",
+            "fields": {
+                "issue_date": {"type": "date", "required": true},
+                "due_date": {"type": "date", "required": true},
+                "note": {"type": "string", "required": false}
+            },
+            "rules": [
+                {
+                    "rule_id": "date-order",
+                    "kind": "comparison",
+                    "left_field": "issue_date",
+                    "operator": "lte",
+                    "right_field": "due_date"
+                },
+                {
+                    "rule_id": "note-on-date",
+                    "kind": "required_if",
+                    "when": {"field": "issue_date", "operator": "equals", "value": "2026-03-15"},
+                    "target_fields": ["note"],
+                    "severity": "warning"
+                }
+            ]
+        }""",
+        encoding="utf-8",
+    )
+    loaded = ExtractionSchema.from_json_file(schema_file)
+    assert len(loaded.rules) == 2
+
+    # Unknown attribute on rule rejected
+    with pytest.raises(SchemaDefinitionError, match="Unknown attributes"):
+        ExtractionSchema.from_dict(
+            {
+                "schema_id": "bad-rule-key",
+                "fields": {"a": {"type": "string"}, "b": {"type": "string"}},
+                "rules": [
+                    {
+                        "rule_id": "r1",
+                        "kind": "comparison",
+                        "left_field": "a",
+                        "operator": "eq",
+                        "right_field": "b",
+                        "extra_bad": True,
+                    }
+                ],
+            }
+        )
+
+    # Unsupported rule kind rejected
+    with pytest.raises(SchemaDefinitionError, match="Unsupported validation rule kind"):
+        ExtractionSchema.from_dict(
+            {
+                "schema_id": "bad-rule-kind",
+                "fields": {"a": {"type": "string"}},
+                "rules": [{"rule_id": "r1", "kind": "eval_python"}],
+            }
+        )

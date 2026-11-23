@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from datetime import date
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,19 @@ from typing import Any
 from structa_maestro.contracts.enums import ExtractionCardinality, FieldType
 from structa_maestro.exceptions import SchemaDefinitionError
 from structa_maestro.schema.models import ExtractionSchema, FieldConstraints, FieldSpec
+from structa_maestro.schema.rules import (
+    ArithmeticRule,
+    ArithmeticTerm,
+    ComparisonRule,
+    ConditionalPresenceKind,
+    ConditionalPresenceRule,
+    FieldCondition,
+    GroupPresenceKind,
+    GroupPresenceRule,
+    RuleSeverity,
+    ValidationRule,
+    resolve_schema_field_spec,
+)
 
 _MAX_SCHEMA_JSON_BYTES = 2 * 1024 * 1024  # 2 MB safety limit for schema files
 
@@ -44,8 +58,22 @@ _ALLOWED_TOP_LEVEL_KEYS = frozenset(
         "$schema",
         "$id",
         "description",
+        "rules",
     }
 )
+
+_ALLOWED_COMPARISON_KEYS = frozenset(
+    {"rule_id", "kind", "left_field", "operator", "right_field", "severity", "message"}
+)
+_ALLOWED_ARITHMETIC_KEYS = frozenset(
+    {"rule_id", "kind", "terms", "target_field", "tolerance", "severity", "message"}
+)
+_ALLOWED_TERM_KEYS = frozenset({"field", "sign", "item_field", "treat_missing_as_zero"})
+_ALLOWED_CONDITIONAL_KEYS = frozenset(
+    {"rule_id", "kind", "when", "target_fields", "severity", "message"}
+)
+_ALLOWED_CONDITION_KEYS = frozenset({"field", "operator", "value", "values"})
+_ALLOWED_GROUP_KEYS = frozenset({"rule_id", "kind", "fields", "severity", "message"})
 
 _ALLOWED_FIELD_KEYS = frozenset(
     {
@@ -338,6 +366,8 @@ def load_schema_from_dict(data: Mapping[str, Any]) -> ExtractionSchema:
             max_depth=raw_max_depth,
         )
 
+    parsed_rules = _parse_rules(data.get("rules"), parsed_fields)
+
     return ExtractionSchema(
         schema_id=schema_id.strip(),
         schema_version=schema_version.strip(),
@@ -345,7 +375,214 @@ def load_schema_from_dict(data: Mapping[str, Any]) -> ExtractionSchema:
         cardinality=cardinality,
         allow_additional_fields=raw_addl,
         max_depth=raw_max_depth,
+        rules=parsed_rules,
     )
+
+
+def _coerce_condition_literal(raw: Any, field_type: FieldType) -> Any:
+    if raw is None:
+        return None
+    if field_type == FieldType.DATE and isinstance(raw, str):
+        try:
+            return date.fromisoformat(raw.strip())
+        except ValueError as exc:
+            raise SchemaDefinitionError(
+                f"Invalid ISO date literal in rule condition: {raw!r}"
+            ) from exc
+    if field_type == FieldType.DECIMAL and not isinstance(raw, bool):
+        if isinstance(raw, Decimal):
+            return raw
+        if isinstance(raw, (int, float, str)):
+            try:
+                return Decimal(str(raw).strip())
+            except InvalidOperation as exc:
+                raise SchemaDefinitionError(
+                    f"Invalid decimal literal in rule condition: {raw!r}"
+                ) from exc
+    return raw
+
+
+def _parse_rules(
+    raw_rules: Any,
+    parsed_fields: Mapping[str, FieldSpec],
+) -> tuple[ValidationRule, ...]:
+    if raw_rules is None:
+        return ()
+    if not isinstance(raw_rules, list):
+        raise SchemaDefinitionError("Schema 'rules' attribute must be a list of rule objects.")
+
+    rules: list[ValidationRule] = []
+    for idx, raw_rule in enumerate(raw_rules):
+        if not isinstance(raw_rule, Mapping):
+            raise SchemaDefinitionError(f"Rule at index {idx} must be a mapping/object.")
+        raw_kind = raw_rule.get("kind")
+        if not isinstance(raw_kind, str) or not raw_kind.strip():
+            raise SchemaDefinitionError(f"Rule at index {idx} must specify a string 'kind'.")
+        kind = raw_kind.strip().lower()
+        severity = raw_rule.get("severity", RuleSeverity.ERROR)
+        message = raw_rule.get("message")
+        rule_id = raw_rule.get("rule_id")
+        if not isinstance(rule_id, str):
+            raise SchemaDefinitionError(f"Rule at index {idx} must specify a string 'rule_id'.")
+
+        if kind == "comparison":
+            unknown = set(raw_rule.keys()) - _ALLOWED_COMPARISON_KEYS
+            if unknown:
+                raise SchemaDefinitionError(
+                    f"Unknown attributes on comparison rule {rule_id!r}: "
+                    f"{', '.join(sorted(unknown))}"
+                )
+            rules.append(
+                ComparisonRule(
+                    rule_id=rule_id,
+                    left_field=raw_rule.get("left_field", ""),
+                    operator=raw_rule.get("operator", ""),
+                    right_field=raw_rule.get("right_field", ""),
+                    severity=severity,
+                    message=message,
+                )
+            )
+
+        elif kind == "arithmetic":
+            unknown = set(raw_rule.keys()) - _ALLOWED_ARITHMETIC_KEYS
+            if unknown:
+                raise SchemaDefinitionError(
+                    f"Unknown attributes on arithmetic rule {rule_id!r}: "
+                    f"{', '.join(sorted(unknown))}"
+                )
+            raw_terms = raw_rule.get("terms")
+            if not isinstance(raw_terms, list) or not raw_terms:
+                raise SchemaDefinitionError(
+                    f"Arithmetic rule {rule_id!r} must define a non-empty 'terms' list."
+                )
+            parsed_terms: list[ArithmeticTerm] = []
+            for t_idx, raw_term in enumerate(raw_terms):
+                if not isinstance(raw_term, Mapping):
+                    raise SchemaDefinitionError(
+                        f"Arithmetic rule {rule_id!r} term #{t_idx} must be an object."
+                    )
+                t_unknown = set(raw_term.keys()) - _ALLOWED_TERM_KEYS
+                if t_unknown:
+                    raise SchemaDefinitionError(
+                        f"Unknown attributes on arithmetic term in {rule_id!r}: "
+                        f"{', '.join(sorted(t_unknown))}"
+                    )
+                parsed_terms.append(
+                    ArithmeticTerm(
+                        field=raw_term.get("field", ""),
+                        sign=raw_term.get("sign", 1),
+                        item_field=raw_term.get("item_field"),
+                        treat_missing_as_zero=raw_term.get("treat_missing_as_zero", False),
+                    )
+                )
+            rules.append(
+                ArithmeticRule(
+                    rule_id=rule_id,
+                    terms=tuple(parsed_terms),
+                    target_field=raw_rule.get("target_field", ""),
+                    tolerance=raw_rule.get("tolerance", Decimal("0")),
+                    severity=severity,
+                    message=message,
+                )
+            )
+
+        elif kind in (
+            ConditionalPresenceKind.REQUIRED_IF.value,
+            ConditionalPresenceKind.FORBIDDEN_IF.value,
+        ):
+            unknown = set(raw_rule.keys()) - _ALLOWED_CONDITIONAL_KEYS
+            if unknown:
+                raise SchemaDefinitionError(
+                    f"Unknown attributes on conditional rule {rule_id!r}: "
+                    f"{', '.join(sorted(unknown))}"
+                )
+            raw_when = raw_rule.get("when")
+            if not isinstance(raw_when, Mapping):
+                raise SchemaDefinitionError(
+                    f"Conditional rule {rule_id!r} must define a 'when' condition object."
+                )
+            w_unknown = set(raw_when.keys()) - _ALLOWED_CONDITION_KEYS
+            if w_unknown:
+                raise SchemaDefinitionError(
+                    f"Unknown attributes on condition in rule {rule_id!r}: "
+                    f"{', '.join(sorted(w_unknown))}"
+                )
+            cond_field = raw_when.get("field", "")
+            cond_spec = (
+                resolve_schema_field_spec(parsed_fields, cond_field.strip())
+                if isinstance(cond_field, str) and cond_field.strip()
+                else None
+            )
+            cond_val = raw_when.get("value")
+            if cond_val is not None and cond_spec is not None:
+                cond_val = _coerce_condition_literal(cond_val, cond_spec.field_type)
+            raw_vals = raw_when.get("values")
+            cond_vals: tuple[Any, ...] | None = None
+            if raw_vals is not None:
+                if not isinstance(raw_vals, (list, tuple)):
+                    raise SchemaDefinitionError(
+                        f"Condition 'values' in rule {rule_id!r} must be a list."
+                    )
+                cond_vals = tuple(
+                    _coerce_condition_literal(v, cond_spec.field_type)
+                    if cond_spec is not None
+                    else v
+                    for v in raw_vals
+                )
+            when = FieldCondition(
+                field=cond_field,
+                operator=raw_when.get("operator", ""),
+                value=cond_val,
+                values=cond_vals,
+            )
+            raw_targets = raw_rule.get("target_fields")
+            if not isinstance(raw_targets, list) or not all(
+                isinstance(t, str) for t in raw_targets
+            ):
+                raise SchemaDefinitionError(
+                    f"Conditional rule {rule_id!r} 'target_fields' must be a list of strings."
+                )
+            rules.append(
+                ConditionalPresenceRule(
+                    rule_id=rule_id,
+                    kind=ConditionalPresenceKind(kind),
+                    when=when,
+                    target_fields=tuple(raw_targets),
+                    severity=severity,
+                    message=message,
+                )
+            )
+
+        elif kind in (
+            GroupPresenceKind.MUTUALLY_EXCLUSIVE.value,
+            GroupPresenceKind.AT_LEAST_ONE_OF.value,
+        ):
+            unknown = set(raw_rule.keys()) - _ALLOWED_GROUP_KEYS
+            if unknown:
+                raise SchemaDefinitionError(
+                    f"Unknown attributes on group rule {rule_id!r}: {', '.join(sorted(unknown))}"
+                )
+            raw_group = raw_rule.get("fields")
+            if not isinstance(raw_group, list) or not all(isinstance(f, str) for f in raw_group):
+                raise SchemaDefinitionError(
+                    f"Group rule {rule_id!r} 'fields' must be a list of strings."
+                )
+            rules.append(
+                GroupPresenceRule(
+                    rule_id=rule_id,
+                    kind=GroupPresenceKind(kind),
+                    fields=tuple(raw_group),
+                    severity=severity,
+                    message=message,
+                )
+            )
+
+        else:
+            raise SchemaDefinitionError(
+                f"Unsupported validation rule kind {raw_kind!r} on rule {rule_id!r}."
+            )
+
+    return tuple(rules)
 
 
 def load_schema_from_json_file(path: str | Path) -> ExtractionSchema:

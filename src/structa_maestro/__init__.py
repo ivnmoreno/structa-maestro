@@ -39,6 +39,20 @@ from structa_maestro.exceptions import (
 )
 from structa_maestro.provenance.associator import ProvenanceAssociator
 from structa_maestro.schema.models import ExtractionSchema, FieldConstraints, FieldSpec
+from structa_maestro.schema.rules import (
+    ArithmeticRule,
+    ArithmeticTerm,
+    ComparisonOperator,
+    ComparisonRule,
+    ConditionalPresenceKind,
+    ConditionalPresenceRule,
+    ConditionOperator,
+    FieldCondition,
+    GroupPresenceKind,
+    GroupPresenceRule,
+    RuleSeverity,
+    ValidationRule,
+)
 from structa_maestro.strategies.base import (
     ExtractionStrategy,
     ProposedEvidence,
@@ -64,7 +78,14 @@ __version__ = "0.1.0"
 
 __all__ = [
     "CONTRACT_VERSION",
+    "ArithmeticRule",
+    "ArithmeticTerm",
+    "ComparisonOperator",
+    "ComparisonRule",
     "CompiledOutputSchema",
+    "ConditionOperator",
+    "ConditionalPresenceKind",
+    "ConditionalPresenceRule",
     "ConfidenceAssessment",
     "ConfidenceNormalizer",
     "ConfigurationError",
@@ -83,10 +104,13 @@ __all__ = [
     "ExtractionResult",
     "ExtractionSchema",
     "ExtractionStrategy",
+    "FieldCondition",
     "FieldConstraints",
     "FieldPresence",
     "FieldSpec",
     "FieldType",
+    "GroupPresenceKind",
+    "GroupPresenceRule",
     "InputBudgetOverflowPolicy",
     "InputBudgetPolicy",
     "IssueSeverity",
@@ -101,6 +125,7 @@ __all__ = [
     "ProvenanceEvidence",
     "ResultBuilder",
     "RetryPolicy",
+    "RuleSeverity",
     "SchemaDefinitionError",
     "SchemaMetadata",
     "SecretValue",
@@ -110,6 +135,7 @@ __all__ = [
     "StructaMaestroError",
     "StructuredOutputMode",
     "ValidationOutcome",
+    "ValidationRule",
     "ValidationStatus",
     "__version__",
     "compile_extraction_output_schema",
