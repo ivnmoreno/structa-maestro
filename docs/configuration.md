@@ -19,7 +19,13 @@ When using `OpenAICompatibleLLMStrategy`:
 - **Endpoint**: Configure `base_url` to any OpenAI-compatible Chat Completions endpoint (e.g., `https://api.openai.com/v1`, Azure OpenAI proxy, or local Ollama/vLLM server).
 - **Credentials**: Supply credentials through environment variables (`STRUCTA_MAESTRO_API_KEY` by default in CLI) or `SecretValue`. The CLI intentionally does not accept raw API keys as flags to prevent leakage into shell history or process listings.
 - **Data Transmission Notice**: Prepared text extracted from the submitted document is transmitted to the configured endpoint. Review your provider's retention and compliance terms before sending personal, financial, or confidential records.
-- **Prompt Injection Defense**: Every call wraps prepared text in a fresh cryptographic nonce tag (`<untrusted_document nonce="...">`) separated from system instructions, and downstream deterministic validation independently rejects schema-violating or extra injected fields.
+- **Structured Output Modes (`StructuredOutputMode`)**:
+  - `strict_with_fallback` *(default)*: Compiles `ExtractionSchema` into a strict closed `json_schema` response format (`additionalProperties: false`) and automatically falls back once to `json_object` with warning `structured_output_fallback` if the schema sets `allow_additional_fields=True` or the endpoint rejects strict schema mode.
+  - `strict`: Enforces strict `json_schema` mode without fallback (fails explicitly with `strict_schema_incompatible` on open schemas or on endpoint rejection).
+  - `json_object`: Uses basic JSON-object response mode directly.
+- **Bounded Retries (`RetryPolicy`)**: Automatically retries transient failures (`408`, `429`, `5xx`, timeouts, connection errors, and retryable malformed/truncated model JSON by default) up to `max_retries=2` with bounded exponential backoff, jitter, RFC 7231 `Retry-After` honoring, and optional `max_total_seconds` deadline capping. Permanent errors (`400`/`422` non-fallback, `401`, `403`, `404`, policy refusals) fail immediately with zero retries.
+- **Document Input Budget (`InputBudgetPolicy`)**: Enforces `max_input_chars=120_000` by default (overrideable to any positive integer or `None` to disable) with `overflow_policy="reject"` (fails pre-network with `input_budget_exceeded`) or `overflow_policy="truncate"` (truncates on a clean line boundary, forces `partial` status, and emits `input_truncated`).
+- **Prompt Injection Defense**: Every call wraps prepared text in a fresh cryptographic nonce tag (`<untrusted_document nonce="...">`) separated from system instructions, neutralizes embedded `<untrusted_document`/`</untrusted_document` tags inside prompt text without mutating `PreparedDocument` for provenance verification, and independently rejects schema-violating or extra injected fields during deterministic validation.
 
 ## Logging & Data Minimization
 

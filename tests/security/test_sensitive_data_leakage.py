@@ -61,6 +61,7 @@ def test_sensitive_document_text_and_api_key_excluded_from_logs_and_errors(
             model="gpt-4o-mini",
             api_key="sk-topsecret123456789",
             http_client=client,
+            sleep_fn=lambda _s: None,
         )
         res = extract(doc, schema, strategy=strategy)
 
@@ -74,6 +75,55 @@ def test_sensitive_document_text_and_api_key_excluded_from_logs_and_errors(
     assert res.source is not None
     assert res.source.filename == "secret.txt"
     assert str(tmp_path) not in serialized
+
+
+@pytest.mark.security
+def test_fallback_and_retry_error_bodies_never_leak_secrets_or_document_text(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    secret_key = "sk-retry-fallback-secret-888888"
+    doc_secret = "CONFIDENTIAL-ACCOUNT-444555"
+    doc = tmp_path / "acct.txt"
+    doc.write_text(f"Account: {doc_secret}\n", encoding="utf-8")
+    schema = {
+        "schema_id": "acct",
+        "schema_version": "1.0",
+        "fields": {"account": {"type": "string", "required": True}},
+    }
+    calls = 0
+
+    def _noisy_provider(_req: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(
+                400,
+                text=f"json_schema unsupported for key {secret_key} and text {doc_secret}",
+            )
+        return httpx.Response(
+            503,
+            text=f"upstream 503 with Bearer {secret_key} echoing {doc_secret}",
+        )
+
+    transport = httpx.MockTransport(_noisy_provider)
+    with (
+        caplog.at_level(logging.DEBUG, logger="structa_maestro"),
+        httpx.Client(transport=transport) as client,
+    ):
+        strategy = OpenAICompatibleLLMStrategy(
+            model="gpt-4o-mini",
+            api_key=secret_key,
+            http_client=client,
+            sleep_fn=lambda _s: None,
+        )
+        res = extract(doc, schema, strategy=strategy)
+
+    assert res.status == ProcessingStatus.FAILED
+    serialized = res.to_json()
+    assert secret_key not in serialized
+    assert doc_secret not in serialized
+    assert secret_key not in caplog.text
+    assert doc_secret not in caplog.text
 
 
 @pytest.mark.security

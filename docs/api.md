@@ -15,10 +15,27 @@ All stable public symbols are exported from the top-level `structa_maestro` pack
 - Programmatic classes: `ExtractionSchema`, `FieldSpec`, `FieldConstraints`, `FieldType`, `ExtractionCardinality`.
 - Default unexpected-field policy: `allow_additional_fields=False` (extra fields flagged as `unexpected_field` validation errors unless explicitly opted in).
 
-## Strategies
+## Strategies & Reliability Policies
 
 - `ExtractionStrategy` (Protocol): implement `name` property and `extract_raw(document: PreparedDocument, schema: ExtractionSchema) -> StrategyOutput`.
-- `OpenAICompatibleLLMStrategy(model, api_key, base_url="https://api.openai.com/v1", timeout_seconds=60.0, temperature=0.0, http_client=None)`.
+- `OpenAICompatibleLLMStrategy`:
+  ```python
+  OpenAICompatibleLLMStrategy(
+      model=...,
+      api_key=...,
+      base_url="https://api.openai.com/v1",
+      timeout_seconds=60.0,
+      temperature=0.0,
+      http_client=None,
+      structured_output_mode=StructuredOutputMode.STRICT_WITH_FALLBACK,
+      retry_policy=RetryPolicy(),
+      input_budget=InputBudgetPolicy(),
+  )
+  ```
+- `StructuredOutputMode`: `STRICT_WITH_FALLBACK` (default), `STRICT`, `JSON_OBJECT`.
+- `RetryPolicy(max_retries=2, initial_backoff_seconds=0.5, max_backoff_seconds=8.0, jitter=True, retry_on_malformed_output=True, max_total_seconds=None)`.
+- `InputBudgetPolicy(max_input_chars=120_000, overflow_policy=InputBudgetOverflowPolicy.REJECT)` (`max_input_chars=None` disables budgeting; `InputBudgetOverflowPolicy` is `REJECT` or `TRUNCATE`).
+- `CompiledOutputSchema` & `compile_extraction_output_schema(schema)`: deterministic closed JSON Schema compiler used by strict structured-output mode.
 - `DeterministicTestStrategy(handler_or_output, name="deterministic-test")`.
 
 ## Canonical Output & Serialization
@@ -46,6 +63,10 @@ structa-maestro extract <document> --schema <schema.json>
   [--max-file-mb 25]
   [--max-decompressed-mb 50]
   [--max-pages 200]
+  [--structured-output-mode strict_with_fallback|strict|json_object]
+  [--max-retries 2]
+  [--max-input-chars 120000|none]
+  [--overflow-policy reject|truncate]
   [--pretty]
 ```
 

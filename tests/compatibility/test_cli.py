@@ -117,3 +117,101 @@ def test_cli_exit_code_2_on_failed_or_invalid_result_and_1_on_bad_schema_or_miss
     )
     assert code_bad == 1
     assert "Error:" in err_bad_schema.getvalue()
+
+
+def test_cli_llm_hardening_flags_and_validation(
+    fixtures_dir: Path,
+    monkeypatch: Any,
+) -> None:
+    doc = fixtures_dir / "documents" / "txt" / "invoice_001.txt"
+    schema_path = fixtures_dir / "schemas" / "invoice_schema.json"
+    strat = DeterministicTestStrategy(StrategyOutput(records=()))
+
+    # Valid new flags accepted (including --max-input-chars none)
+    code_ok = run_cli(
+        [
+            "extract",
+            str(doc),
+            "--schema",
+            str(schema_path),
+            "--structured-output-mode",
+            "strict",
+            "--max-retries",
+            "0",
+            "--max-input-chars",
+            "none",
+            "--overflow-policy",
+            "truncate",
+        ],
+        stdout=io.StringIO(),
+        stderr=io.StringIO(),
+        strategy_override=strat,
+    )
+    assert code_ok == 2  # empty records -> invalid canonical result, flags parsed cleanly
+
+    # Invalid --max-retries (-1) exits 1
+    err_retry = io.StringIO()
+    assert (
+        run_cli(
+            ["extract", str(doc), "--schema", str(schema_path), "--max-retries", "-1"],
+            stdout=io.StringIO(),
+            stderr=err_retry,
+            strategy_override=strat,
+        )
+        == 1
+    )
+    assert "Error:" in err_retry.getvalue()
+
+    # Invalid --max-input-chars (0 and non-numeric) exits 1
+    for bad_budget in ("0", "-50", "not-a-number"):
+        err_budget = io.StringIO()
+        assert (
+            run_cli(
+                [
+                    "extract",
+                    str(doc),
+                    "--schema",
+                    str(schema_path),
+                    "--max-input-chars",
+                    bad_budget,
+                ],
+                stdout=io.StringIO(),
+                stderr=err_budget,
+                strategy_override=strat,
+            )
+            == 1
+        )
+        assert "Error:" in err_budget.getvalue()
+
+    # Verify flag values forward cleanly to OpenAICompatibleLLMStrategy
+    captured: dict[str, Any] = {}
+    monkeypatch.setenv("STRUCTA_MAESTRO_API_KEY", "sk-cli-flag-test-123456")
+
+    def _fake_extract(_doc: Any, _schema: Any, **kwargs: Any) -> Any:
+        captured["strategy"] = kwargs["strategy"]
+        raise RuntimeError("stop-after-capture")
+
+    monkeypatch.setattr("structa_maestro.cli.extract", _fake_extract)
+    run_cli(
+        [
+            "extract",
+            str(doc),
+            "--schema",
+            str(schema_path),
+            "--structured-output-mode",
+            "json_object",
+            "--max-retries",
+            "4",
+            "--max-input-chars",
+            "8000",
+            "--overflow-policy",
+            "truncate",
+        ],
+        stdout=io.StringIO(),
+        stderr=io.StringIO(),
+    )
+    strat_obj = captured["strategy"]
+    assert strat_obj.structured_output_mode.value == "json_object"
+    assert strat_obj.retry_policy.max_retries == 4
+    assert strat_obj.input_budget.max_input_chars == 8000
+    assert strat_obj.input_budget.overflow_policy.value == "truncate"

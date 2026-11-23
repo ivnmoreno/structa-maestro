@@ -113,6 +113,7 @@ def test_cli_live_mode_fault_isolation_and_secret_scrubbing(
             api_key=fake_secret,
             base_url="https://api.example.test/v1",
             http_client=client,
+            sleep_fn=lambda _s: None,
         )
         code = run_eval_cli(
             [
@@ -134,6 +135,65 @@ def test_cli_live_mode_fault_isolation_and_secret_scrubbing(
     assert fake_secret not in raw_report
     assert fake_secret not in out_live.getvalue()
     assert fake_secret not in err_live.getvalue()
+
+    # Invalid LLM hardening flags exit 1 cleanly
+    err_bad = io.StringIO()
+    assert (
+        run_eval_cli(
+            [
+                "run",
+                "--strategy",
+                "llm",
+                "--case-id",
+                "inv-txt-001",
+                "--max-retries",
+                "-1",
+            ],
+            stderr=err_bad,
+        )
+        == 1
+    )
+    assert "Error:" in err_bad.getvalue()
+
+    err_budget = io.StringIO()
+    assert (
+        run_eval_cli(
+            [
+                "run",
+                "--strategy",
+                "llm",
+                "--case-id",
+                "inv-txt-001",
+                "--max-input-chars",
+                "0",
+            ],
+            stderr=err_budget,
+        )
+        == 1
+    )
+    assert "Error:" in err_budget.getvalue()
+
+    # Valid --max-input-chars none & --overflow-policy truncate accepted
+    assert (
+        run_eval_cli(
+            [
+                "run",
+                "--case-id",
+                "inv-txt-001",
+                "--structured-output-mode",
+                "strict",
+                "--max-retries",
+                "1",
+                "--max-input-chars",
+                "none",
+                "--overflow-policy",
+                "truncate",
+            ],
+            stdout=io.StringIO(),
+            stderr=io.StringIO(),
+        )
+        == 0
+    )
 
 
 @pytest.mark.evaluation

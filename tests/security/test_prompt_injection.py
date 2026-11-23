@@ -44,6 +44,11 @@ def test_prompt_messages_isolate_untrusted_document_with_unique_nonces(
     assert "UNTRUSTED DATA" in msgs_1[0]["content"]
     assert msgs_1[1]["content"] != msgs_2[1]["content"]
     assert '<untrusted_document nonce="' in msgs_1[1]["content"]
+    # Embedded closing tag is neutralized in prompt text (only the real closing tag remains)
+    assert msgs_1[1]["content"].count("</untrusted_document>") == 1
+    assert "&lt;/untrusted_document>" in msgs_1[1]["content"]
+    # Original PreparedDocument.full_text MUST remain completely untouched for verbatim provenance
+    assert "</untrusted_document>" in loaded.document.full_text
 
 
 @pytest.mark.security
