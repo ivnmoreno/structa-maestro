@@ -7,6 +7,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ## [Unreleased]
 
 ### Added
+- **Cross-Field & Conditional Validation (`ExtractionSchema.rules`, `DeterministicValidator`)**:
+  - Declarative, immutable intra-record validation rules (`ComparisonRule`, `ArithmeticRule`, `ArithmeticTerm`, `FieldCondition`, `ConditionalPresenceRule`, `GroupPresenceRule`) supporting field-to-field comparisons (`eq`, `ne`, `lt`, `lte`, `gt`, `gte`), exact `Decimal` arithmetic balances and nested array collection sums with optional tolerance and `treat_missing_as_zero`, conditional presence (`required_if`, `forbidden_if`), and group constraints (`mutually_exclusive`, `at_least_one_of`).
+  - Eager schema-load validation rejecting unknown field paths, incompatible types, duplicate rule IDs, negative tolerances, and unknown rule attributes with `SchemaDefinitionError` (zero arbitrary code execution / `eval`).
+  - Configurable `RuleSeverity` (`error` vs. `warning`) preserving Canonical Output Record Contract `v1.0` compliance, per-record multi-record isolation, and runnable example `examples/cross_field_validation_example.py`.
 - **LLM Strategy Hardening & Reliability (`OpenAICompatibleLLMStrategy`)**:
   - Deterministic closed JSON Schema compilation (`CompiledOutputSchema`, `compile_extraction_output_schema`) with configurable `StructuredOutputMode` (`strict_with_fallback` default, `strict`, `json_object`) and automatic single-step non-oscillating compatibility fallback (`structured_output_fallback` warning; `strict_schema_incompatible` fail-fast on open schemas in `strict` mode).
   - Safe Markdown-fence and surrounding-prose JSON envelope recovery (`model_output_sanitized` warning) and recursive nested `Decimal`/`date` JSON-wire handling without mutating invalid values.

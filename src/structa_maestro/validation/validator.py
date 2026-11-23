@@ -19,6 +19,7 @@ from structa_maestro.contracts.enums import (
 )
 from structa_maestro.contracts.models import DiagnosticIssue, ValidationOutcome
 from structa_maestro.schema.models import ExtractionSchema, FieldSpec
+from structa_maestro.validation.cross_field import evaluate_cross_field_rules
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,6 +28,7 @@ class RecordValidationResult:
 
     record_outcome: ValidationOutcome
     field_outcomes: dict[str, ValidationOutcome]
+    warnings: tuple[DiagnosticIssue, ...] = ()
 
 
 def _make_error(
@@ -128,6 +130,17 @@ class DeterministicValidator:
             else:
                 field_outcomes[extra_name] = ValidationOutcome(status=ValidationStatus.VALID)
 
+        # 3. Evaluate declarative cross-field & conditional rules (record-level only per Spec 004)
+        rule_warnings: list[DiagnosticIssue] = []
+        if schema.rules:
+            cf_errors, cf_warnings = evaluate_cross_field_rules(
+                fields,
+                schema,
+                record_id=record_id,
+            )
+            all_errors.extend(cf_errors)
+            rule_warnings.extend(cf_warnings)
+
         record_outcome = ValidationOutcome(
             status=ValidationStatus.INVALID if all_errors else ValidationStatus.VALID,
             errors=all_errors,
@@ -135,6 +148,7 @@ class DeterministicValidator:
         return RecordValidationResult(
             record_outcome=record_outcome,
             field_outcomes=field_outcomes,
+            warnings=tuple(rule_warnings),
         )
 
     def validate_result_cardinality(

@@ -138,8 +138,8 @@ Every extraction returns an immutable `ExtractionResult` supporting lossless rou
 
 ## Current Limitations
 
-- **Uncalibrated confidence**: MVP confidence scores always report `"calibrated": false` and MUST NOT be interpreted as statistical probabilities.
-- **Single-field validation**: Cross-field semantic validation (e.g., `issue_date <= due_date`) is outside the MVP.
+- **Uncalibrated confidence**: Confidence scores currently report `"calibrated": false` and MUST NOT be interpreted as statistical probabilities.
+- **Intra-record validation scope**: Declarative cross-field and conditional validation rules operate within each extracted record (including nested objects and line-item arrays); cross-document validation remains out of scope. See [Public API & CLI Reference](docs/api.md) and [examples/cross_field_validation_example.py](examples/cross_field_validation_example.py).
 - **Text-only extraction**: Scanned PDFs and embedded images are not OCR-processed.
 - **External model data transmission**: `OpenAICompatibleLLMStrategy` transmits prepared document text to the configured endpoint; review provider data-handling policies before processing confidential documents.
 
