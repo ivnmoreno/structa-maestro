@@ -2,6 +2,12 @@
 
 from __future__ import annotations
 
+from structa_maestro.batch import (
+    BatchDocumentInput,
+    BatchExtractionResult,
+    BatchOptions,
+    BatchSummary,
+)
 from structa_maestro.builder.result_builder import ResultBuilder
 from structa_maestro.confidence.normalizer import ConfidenceNormalizer
 from structa_maestro.config import DocumentLimits, SecretValue
@@ -30,7 +36,7 @@ from structa_maestro.contracts.models import (
     ValidationOutcome,
 )
 from structa_maestro.documents.models import DocumentSegment, PreparedDocument
-from structa_maestro.engine import ExtractionEngine, extract
+from structa_maestro.engine import ExtractionEngine, extract, extract_batch
 from structa_maestro.exceptions import (
     ConfigurationError,
     ContractDeserializationError,
@@ -80,6 +86,10 @@ __all__ = [
     "CONTRACT_VERSION",
     "ArithmeticRule",
     "ArithmeticTerm",
+    "BatchDocumentInput",
+    "BatchExtractionResult",
+    "BatchOptions",
+    "BatchSummary",
     "ComparisonOperator",
     "ComparisonRule",
     "CompiledOutputSchema",
@@ -140,4 +150,5 @@ __all__ = [
     "__version__",
     "compile_extraction_output_schema",
     "extract",
+    "extract_batch",
 ]

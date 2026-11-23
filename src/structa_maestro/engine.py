@@ -2,14 +2,21 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from structa_maestro.batch import (
+    BatchDocumentInput,
+    BatchExtractionResult,
+    BatchOptions,
+    normalize_batch_inputs,
+    run_batch_extraction,
+)
 from structa_maestro.builder.result_builder import ResultBuilder
 from structa_maestro.config import DocumentLimits, get_logger, sanitize_message
 from structa_maestro.contracts.enums import IssueSeverity, PipelineStage
-from structa_maestro.contracts.models import DiagnosticIssue, ExtractionResult
+from structa_maestro.contracts.models import DiagnosticIssue, ExtractionResult, SchemaMetadata
 from structa_maestro.documents.loader import load_document
 from structa_maestro.exceptions import ConfigurationError, SchemaDefinitionError
 from structa_maestro.schema.models import ExtractionSchema
@@ -157,6 +164,34 @@ class ExtractionEngine:
                 warnings=load_result.warnings,
             )
 
+    def extract_batch(
+        self,
+        documents: Sequence[str | Path | BatchDocumentInput],
+        schema: ExtractionSchema | Mapping[str, Any],
+        *,
+        options: BatchOptions | None = None,
+    ) -> BatchExtractionResult:
+        """Statelessly extract a collection of documents in deterministic input order."""
+        parsed_schema = _coerce_schema(schema)
+        resolved_options = options if options is not None else BatchOptions()
+        if not isinstance(resolved_options, BatchOptions):
+            raise ConfigurationError("options must be a BatchOptions instance or None.")
+        normalized_inputs = normalize_batch_inputs(documents)
+        schema_meta = SchemaMetadata(
+            schema_id=parsed_schema.schema_id,
+            schema_version=parsed_schema.schema_version,
+        )
+
+        def _extract_one(item: BatchDocumentInput) -> ExtractionResult:
+            return self.extract(item.path, parsed_schema, document_id=item.document_id)
+
+        return run_batch_extraction(
+            inputs=normalized_inputs,
+            schema_metadata=schema_meta,
+            options=resolved_options,
+            extract_one=_extract_one,
+        )
+
 
 def extract(
     document: str | Path,
@@ -169,3 +204,16 @@ def extract(
     """Convenience functional entry point delegating directly to ExtractionEngine."""
     engine = ExtractionEngine(strategy=strategy, limits=limits)
     return engine.extract(document, schema, document_id=document_id)
+
+
+def extract_batch(
+    documents: Sequence[str | Path | BatchDocumentInput],
+    schema: ExtractionSchema | Mapping[str, Any],
+    *,
+    strategy: ExtractionStrategy,
+    limits: DocumentLimits | None = None,
+    options: BatchOptions | None = None,
+) -> BatchExtractionResult:
+    """Convenience functional batch entry point delegating directly to ExtractionEngine."""
+    engine = ExtractionEngine(strategy=strategy, limits=limits)
+    return engine.extract_batch(documents, schema, options=options)

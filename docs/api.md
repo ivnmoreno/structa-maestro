@@ -6,7 +6,10 @@ All stable public symbols are exported from the top-level `structa_maestro` pack
 
 - `ExtractionEngine(strategy, *, limits=None)`
   - `.extract(document: str | Path, schema: ExtractionSchema | Mapping[str, Any], *, document_id: str | None = None) -> ExtractionResult`
+  - `.extract_batch(documents: Sequence[str | Path | BatchDocumentInput], schema: ExtractionSchema | Mapping[str, Any], *, options: BatchOptions | None = None) -> BatchExtractionResult`
 - `extract(document, schema, *, strategy, limits=None, document_id=None) -> ExtractionResult`
+- `extract_batch(documents, schema, *, strategy, limits=None, options=None) -> BatchExtractionResult`
+- Batch models: `BatchDocumentInput(path, document_id=None)`, `BatchOptions(max_workers=1, fail_fast=False)` (`1 <= max_workers <= 32`), `BatchSummary` (`to_dict()`, `to_json()`), `BatchExtractionResult` (`to_jsonl()`, `to_dict()`, `to_json()`). See [examples/batch_extraction_example.py](../examples/batch_extraction_example.py).
 
 ## Schema Definition
 
@@ -94,6 +97,14 @@ structa-maestro extract <document> --schema <schema.json>
   [--max-input-chars 120000|none]
   [--overflow-policy reject|truncate]
   [--pretty]
+
+structa-maestro extract-batch <path_or_dir> [<path_or_dir> ...] --schema <schema.json>
+  [--recursive]
+  [--max-workers 1]
+  [--fail-fast]
+  [--output <results.jsonl>]
+  [--summary-json <summary.json>]
+  [all common --model / --base-url / --api-key-env / limit / LLM reliability flags]
 ```
 
-Exit codes: `0` (`completed` + `valid`), `2` (`partial`/`failed`/`invalid` canonical result emitted), `1` (CLI usage, schema, or configuration error).
+Exit codes: `0` (all `completed` + `valid`), `2` (any `partial`/`failed`/`invalid` canonical result emitted or `--fail-fast` stopped early), `1` (CLI usage, empty discovery, schema, or configuration error).

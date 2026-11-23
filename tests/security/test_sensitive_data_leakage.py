@@ -127,6 +127,64 @@ def test_fallback_and_retry_error_bodies_never_leak_secrets_or_document_text(
 
 
 @pytest.mark.security
+def test_concurrent_batch_never_leaks_host_paths_secrets_or_document_text(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    from structa_maestro import BatchOptions, RetryPolicy, extract_batch
+
+    secret_key = "sk-batch-concurrent-secret-777777"
+    nested = tmp_path / "private_host_folder" / "sub"
+    nested.mkdir(parents=True)
+    docs: list[Path] = []
+    secrets_in_docs: list[str] = []
+    for i in range(4):
+        tok = f"CONFIDENTIAL-PAYLOAD-{i:03d}"
+        secrets_in_docs.append(tok)
+        p = nested / f"rec_{i}.txt"
+        p.write_text(f"Account: {tok}\n", encoding="utf-8")
+        docs.append(p)
+
+    schema = {
+        "schema_id": "acct-batch",
+        "schema_version": "1.0",
+        "fields": {"account": {"type": "string", "required": True}},
+    }
+
+    def _fail_provider(_req: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError(f"Error with Bearer {secret_key} and {secrets_in_docs[0]}")
+
+    transport = httpx.MockTransport(_fail_provider)
+    with (
+        caplog.at_level(logging.DEBUG, logger="structa_maestro"),
+        httpx.Client(transport=transport) as client,
+    ):
+        strategy = OpenAICompatibleLLMStrategy(
+            model="gpt-4o-mini",
+            api_key=secret_key,
+            http_client=client,
+            retry_policy=RetryPolicy(max_retries=1),
+            sleep_fn=lambda _s: None,
+        )
+        batch = extract_batch(docs, schema, strategy=strategy, options=BatchOptions(max_workers=4))
+
+    jsonl = batch.to_jsonl()
+    summary_json = batch.summary.to_json()
+    assert batch.summary.failed_count == 4
+    assert secret_key not in jsonl
+    assert secret_key not in summary_json
+    assert secret_key not in caplog.text
+    assert "private_host_folder" not in jsonl
+    assert "private_host_folder" not in summary_json
+    for tok in secrets_in_docs:
+        assert tok not in jsonl
+        assert tok not in summary_json
+        assert tok not in caplog.text
+    for idx, res in enumerate(batch.results):
+        assert res.source is not None
+        assert res.source.filename == f"rec_{idx}.txt"
+
+
+@pytest.mark.security
 def test_concurrent_extractions_remain_isolated_with_unique_ids(tmp_path: Path) -> None:
     doc_a = tmp_path / "a.txt"
     doc_b = tmp_path / "b.txt"

@@ -108,16 +108,23 @@ For offline deterministic tests or custom extraction logic without external API 
 
 ---
 
-## Thin Single-Document CLI
+## Thin CLI (`extract` & `extract-batch`)
 
 ```bash
 export STRUCTA_MAESTRO_API_KEY="your-api-key"
+
+# Single document -> Canonical Output Record Contract v1.0 JSON
 structa-maestro extract invoice.pdf --schema invoice_schema.json --pretty
+
+# Folder / multi-file batch -> Contract v1.0 JSON Lines (JSONL) + optional summary
+structa-maestro extract-batch ./invoices/ --schema invoice_schema.json \
+  --recursive --max-workers 4 --output results.jsonl --summary-json summary.json
 ```
 
 - Supports optional reliability controls (`--structured-output-mode`, `--max-retries`, `--max-input-chars`, `--overflow-policy`) mirroring `OpenAICompatibleLLMStrategy`'s strict schema-guided output, bounded retries, and input-budgeting policies.
+- Programmatic stateless batch extraction is available via `extract_batch(...)` and `ExtractionEngine.extract_batch(...)` with `BatchOptions(max_workers=..., fail_fast=...)`; see [examples/batch_extraction_example.py](examples/batch_extraction_example.py).
 - Emits the exact **Canonical Output Record Contract v1.0** JSON on `stdout` (or `--output <path>`).
-- Exit codes: `0` (`completed` + `valid`), `2` (`partial`/`failed`/`invalid` canonical result), `1` (invalid CLI args, schema, or configuration).
+- Exit codes: `0` (all `completed` + `valid`), `2` (any `partial`/`failed`/`invalid` canonical result or early `--fail-fast` stop), `1` (invalid CLI args, empty discovery, schema, or configuration error).
 
 ---
 
