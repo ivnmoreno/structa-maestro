@@ -15,6 +15,14 @@ from structa_maestro.engine import extract
 from structa_maestro.exceptions import StructaMaestroError
 from structa_maestro.schema.models import ExtractionSchema
 from structa_maestro.strategies.base import ExtractionStrategy
+from structa_maestro.strategies.llm_config import (
+    DEFAULT_MAX_INPUT_CHARS,
+    InputBudgetOverflowPolicy,
+    InputBudgetPolicy,
+    RetryPolicy,
+    StructuredOutputMode,
+    parse_max_input_chars_arg,
+)
 from structa_maestro.strategies.llm_openai_compat import OpenAICompatibleLLMStrategy
 
 _DEFAULT_API_KEY_ENV = "STRUCTA_MAESTRO_API_KEY"
@@ -70,6 +78,32 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Maximum PDF page count (default: 200).",
     )
     ext.add_argument(
+        "--structured-output-mode",
+        choices=[m.value for m in StructuredOutputMode],
+        default=StructuredOutputMode.STRICT_WITH_FALLBACK.value,
+        help="Structured output enforcement mode (default: strict_with_fallback).",
+    )
+    ext.add_argument(
+        "--max-retries",
+        type=int,
+        default=2,
+        help="Maximum bounded retries on transient provider/output failures (default: 2).",
+    )
+    ext.add_argument(
+        "--max-input-chars",
+        default=str(DEFAULT_MAX_INPUT_CHARS),
+        help=(
+            "Maximum prepared document characters sent to the model, or 'none' to disable "
+            f"(default: {DEFAULT_MAX_INPUT_CHARS})."
+        ),
+    )
+    ext.add_argument(
+        "--overflow-policy",
+        choices=[p.value for p in InputBudgetOverflowPolicy],
+        default=InputBudgetOverflowPolicy.REJECT.value,
+        help="Overflow policy when input exceeds --max-input-chars (default: reject).",
+    )
+    ext.add_argument(
         "--pretty",
         action="store_true",
         help="Pretty-print canonical JSON output with 2-space indentation.",
@@ -109,6 +143,11 @@ def run_cli(
             max_decompressed_bytes=args.max_decompressed_mb * 1024 * 1024,
             max_pages=args.max_pages,
         )
+        retry_policy = RetryPolicy(max_retries=args.max_retries)
+        input_budget = InputBudgetPolicy(
+            max_input_chars=parse_max_input_chars_arg(args.max_input_chars),
+            overflow_policy=InputBudgetOverflowPolicy(args.overflow_policy),
+        )
         if strategy_override is not None:
             strategy: ExtractionStrategy = strategy_override
         else:
@@ -121,6 +160,9 @@ def run_cli(
                 model=args.model,
                 api_key=api_key_val,
                 base_url=args.base_url,
+                structured_output_mode=args.structured_output_mode,
+                retry_policy=retry_policy,
+                input_budget=input_budget,
             )
 
         result = extract(

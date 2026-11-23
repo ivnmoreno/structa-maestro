@@ -58,8 +58,12 @@ python -m evals diff evals/baselines/deterministic_v2.0.0.json /tmp/trials.json
 ```bash
 export STRUCTA_MAESTRO_API_KEY="your-api-key"
 python -m evals run \
-  --strategy openai-compatible \
+  --strategy llm \
   --model gpt-4o-mini \
+  --structured-output-mode strict_with_fallback \
+  --max-retries 2 \
+  --max-input-chars 120000 \
+  --overflow-policy reject \
   --trials 3 \
   --baseline evals/baselines/deterministic_v2.0.0.json \
   --output-json /tmp/live-benchmark.json \

@@ -29,6 +29,14 @@ from evals.runner import EvaluationRunner
 from structa_maestro.config import sanitize_message
 from structa_maestro.contracts.enums import DocumentFormat
 from structa_maestro.strategies.base import ExtractionStrategy
+from structa_maestro.strategies.llm_config import (
+    DEFAULT_MAX_INPUT_CHARS,
+    InputBudgetOverflowPolicy,
+    InputBudgetPolicy,
+    RetryPolicy,
+    StructuredOutputMode,
+    parse_max_input_chars_arg,
+)
 from structa_maestro.strategies.llm_openai_compat import OpenAICompatibleLLMStrategy
 
 _DEFAULT_API_KEY_ENV = "STRUCTA_MAESTRO_API_KEY"
@@ -62,6 +70,18 @@ def _build_parser() -> argparse.ArgumentParser:
     run_p.add_argument("--model", default=_DEFAULT_MODEL)
     run_p.add_argument("--base-url", default=_DEFAULT_BASE_URL)
     run_p.add_argument("--api-key-env", default=_DEFAULT_API_KEY_ENV)
+    run_p.add_argument(
+        "--structured-output-mode",
+        choices=[m.value for m in StructuredOutputMode],
+        default=StructuredOutputMode.STRICT_WITH_FALLBACK.value,
+    )
+    run_p.add_argument("--max-retries", type=int, default=2)
+    run_p.add_argument("--max-input-chars", default=str(DEFAULT_MAX_INPUT_CHARS))
+    run_p.add_argument(
+        "--overflow-policy",
+        choices=[p.value for p in InputBudgetOverflowPolicy],
+        default=InputBudgetOverflowPolicy.REJECT.value,
+    )
     run_p.add_argument("--config-version", default="default")
     run_p.add_argument("--trials", type=int, default=1)
     run_p.add_argument("--category", action="append", default=[])
@@ -157,6 +177,11 @@ def run_eval_cli(
                 profiles=[ChallengeProfile(p) for p in args.profile],
                 case_ids=list(args.case_id),
             )
+            retry_policy = RetryPolicy(max_retries=args.max_retries)
+            input_budget = InputBudgetPolicy(
+                max_input_chars=parse_max_input_chars_arg(args.max_input_chars),
+                overflow_policy=InputBudgetOverflowPolicy(args.overflow_policy),
+            )
             if strategy_override is not None:
                 strategy: ExtractionStrategy = strategy_override
             elif args.strategy == "deterministic":
@@ -172,6 +197,9 @@ def run_eval_cli(
                     model=args.model,
                     api_key=api_key,
                     base_url=args.base_url,
+                    structured_output_mode=args.structured_output_mode,
+                    retry_policy=retry_policy,
+                    input_budget=input_budget,
                 )
 
             runner = EvaluationRunner(manifest)

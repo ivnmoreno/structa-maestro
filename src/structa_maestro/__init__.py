@@ -46,7 +46,17 @@ from structa_maestro.strategies.base import (
     ProposedRecord,
     StrategyOutput,
 )
+from structa_maestro.strategies.llm_config import (
+    InputBudgetOverflowPolicy,
+    InputBudgetPolicy,
+    RetryPolicy,
+    StructuredOutputMode,
+)
 from structa_maestro.strategies.llm_openai_compat import OpenAICompatibleLLMStrategy
+from structa_maestro.strategies.schema_compiler import (
+    CompiledOutputSchema,
+    compile_extraction_output_schema,
+)
 from structa_maestro.strategies.testing import DeterministicTestStrategy
 from structa_maestro.validation.validator import DeterministicValidator
 
@@ -54,6 +64,7 @@ __version__ = "0.1.0"
 
 __all__ = [
     "CONTRACT_VERSION",
+    "CompiledOutputSchema",
     "ConfidenceAssessment",
     "ConfidenceNormalizer",
     "ConfigurationError",
@@ -76,6 +87,8 @@ __all__ = [
     "FieldPresence",
     "FieldSpec",
     "FieldType",
+    "InputBudgetOverflowPolicy",
+    "InputBudgetPolicy",
     "IssueSeverity",
     "OpenAICompatibleLLMStrategy",
     "PipelineStage",
@@ -87,6 +100,7 @@ __all__ = [
     "ProvenanceAssociator",
     "ProvenanceEvidence",
     "ResultBuilder",
+    "RetryPolicy",
     "SchemaDefinitionError",
     "SchemaMetadata",
     "SecretValue",
@@ -94,8 +108,10 @@ __all__ = [
     "SourceMetadata",
     "StrategyOutput",
     "StructaMaestroError",
+    "StructuredOutputMode",
     "ValidationOutcome",
     "ValidationStatus",
     "__version__",
+    "compile_extraction_output_schema",
     "extract",
 ]

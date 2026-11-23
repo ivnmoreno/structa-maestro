@@ -113,6 +113,7 @@ export STRUCTA_MAESTRO_API_KEY="your-api-key"
 structa-maestro extract invoice.pdf --schema invoice_schema.json --pretty
 ```
 
+- Supports optional reliability controls (`--structured-output-mode`, `--max-retries`, `--max-input-chars`, `--overflow-policy`) mirroring `OpenAICompatibleLLMStrategy`'s strict schema-guided output, bounded retries, and input-budgeting policies.
 - Emits the exact **Canonical Output Record Contract v1.0** JSON on `stdout` (or `--output <path>`).
 - Exit codes: `0` (`completed` + `valid`), `2` (`partial`/`failed`/`invalid` canonical result), `1` (invalid CLI args, schema, or configuration).
 
