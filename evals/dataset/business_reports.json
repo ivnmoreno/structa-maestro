@@ -1,0 +1,779 @@
+{
+  "cases": [
+    {
+      "case_id": "rpt-pdf-001",
+      "category": "business_reports",
+      "format": "pdf",
+      "challenge_profiles": [
+        "straightforward"
+      ],
+      "description": "Straightforward PDF quarterly business performance report.",
+      "document": {
+        "kind": "pdf",
+        "filename": "rpt_001.pdf",
+        "pages": [
+          "company_name: Borealis Grid Inc.\nreporting_period: 2026-Q1\nrevenue_millions: 48.20\noperating_margin: 14.5\nheadcount: 320"
+        ]
+      },
+      "schema_definition": {
+        "schema_id": "business-report-schema",
+        "schema_version": "1.0",
+        "cardinality": "single",
+        "fields": {
+          "company_name": {
+            "type": "string",
+            "required": true
+          },
+          "reporting_period": {
+            "type": "string",
+            "required": true
+          },
+          "revenue_millions": {
+            "type": "decimal",
+            "required": true,
+            "min_value": 0
+          },
+          "operating_margin": {
+            "type": "decimal",
+            "required": true
+          },
+          "headcount": {
+            "type": "integer",
+            "required": true,
+            "min_value": 1
+          },
+          "guidance_notes": {
+            "type": "string",
+            "required": false,
+            "nullable": true
+          }
+        }
+      },
+      "expected_status": "completed",
+      "expected_validation": "valid",
+      "expected_records": [
+        {
+          "expected_validation": "valid",
+          "fields": {
+            "company_name": {
+              "presence": "present",
+              "value": "Borealis Grid Inc.",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "company_name: Borealis Grid Inc."
+              ],
+              "expect_ambiguous": false
+            },
+            "reporting_period": {
+              "presence": "present",
+              "value": "2026-Q1",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "reporting_period: 2026-Q1"
+              ],
+              "expect_ambiguous": false
+            },
+            "revenue_millions": {
+              "presence": "present",
+              "value": "48.20",
+              "match_mode": "decimal_equal",
+              "expected_evidence": [
+                "revenue_millions: 48.20"
+              ],
+              "expect_ambiguous": false
+            },
+            "operating_margin": {
+              "presence": "present",
+              "value": "14.5",
+              "match_mode": "decimal_equal",
+              "expected_evidence": [
+                "operating_margin: 14.5"
+              ],
+              "expect_ambiguous": false
+            },
+            "headcount": {
+              "presence": "present",
+              "value": 320,
+              "match_mode": "exact",
+              "expected_evidence": [
+                "headcount: 320"
+              ],
+              "expect_ambiguous": false
+            },
+            "guidance_notes": {
+              "presence": "missing",
+              "value": null,
+              "match_mode": "exact",
+              "expected_evidence": [],
+              "expect_ambiguous": false
+            }
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "rpt-docx-002",
+      "category": "business_reports",
+      "format": "docx",
+      "challenge_profiles": [
+        "complex_formatting"
+      ],
+      "description": "DOCX business report with executive heading and KPI table.",
+      "document": {
+        "kind": "docx",
+        "filename": "rpt_002_table.docx",
+        "headings": [
+          "Q2 Executive KPI Summary"
+        ],
+        "tables": [
+          [
+            [
+              "Metric",
+              "Value"
+            ],
+            [
+              "company_name",
+              "Vanguard Optics"
+            ],
+            [
+              "reporting_period",
+              "2026-Q2"
+            ],
+            [
+              "revenue_millions",
+              "105.75"
+            ],
+            [
+              "operating_margin",
+              "19.2"
+            ],
+            [
+              "headcount",
+              "1,450"
+            ]
+          ]
+        ]
+      },
+      "schema_definition": {
+        "schema_id": "business-report-schema",
+        "schema_version": "1.0",
+        "cardinality": "single",
+        "fields": {
+          "company_name": {
+            "type": "string",
+            "required": true
+          },
+          "reporting_period": {
+            "type": "string",
+            "required": true
+          },
+          "revenue_millions": {
+            "type": "decimal",
+            "required": true,
+            "min_value": 0
+          },
+          "operating_margin": {
+            "type": "decimal",
+            "required": true
+          },
+          "headcount": {
+            "type": "integer",
+            "required": true,
+            "min_value": 1
+          },
+          "guidance_notes": {
+            "type": "string",
+            "required": false,
+            "nullable": true
+          }
+        }
+      },
+      "expected_status": "completed",
+      "expected_validation": "valid",
+      "expected_records": [
+        {
+          "expected_validation": "valid",
+          "fields": {
+            "company_name": {
+              "presence": "present",
+              "value": "Vanguard Optics",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "company_name | Vanguard Optics"
+              ],
+              "expect_ambiguous": false
+            },
+            "reporting_period": {
+              "presence": "present",
+              "value": "2026-Q2",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "reporting_period | 2026-Q2"
+              ],
+              "expect_ambiguous": false
+            },
+            "revenue_millions": {
+              "presence": "present",
+              "value": "105.75",
+              "match_mode": "decimal_equal",
+              "expected_evidence": [
+                "revenue_millions | 105.75"
+              ],
+              "expect_ambiguous": false
+            },
+            "operating_margin": {
+              "presence": "present",
+              "value": "19.2",
+              "match_mode": "decimal_equal",
+              "expected_evidence": [
+                "operating_margin | 19.2"
+              ],
+              "expect_ambiguous": false
+            },
+            "headcount": {
+              "presence": "present",
+              "value": 1450,
+              "match_mode": "exact",
+              "expected_evidence": [
+                "headcount | 1,450"
+              ],
+              "expect_ambiguous": false
+            },
+            "guidance_notes": {
+              "presence": "missing",
+              "value": null,
+              "match_mode": "exact",
+              "expected_evidence": [],
+              "expect_ambiguous": false
+            }
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "rpt-txt-003",
+      "category": "business_reports",
+      "format": "txt",
+      "challenge_profiles": [
+        "multiple_records"
+      ],
+      "description": "Multi-region TXT report containing 3 business unit summaries.",
+      "document": {
+        "kind": "txt",
+        "filename": "rpt_003_multi.txt",
+        "lines": [
+          "company_name: Atlas EMEA",
+          "reporting_period: 2026-Q1",
+          "revenue_millions: 20.0",
+          "operating_margin: 12.0",
+          "headcount: 110",
+          "--- RECORD ---",
+          "company_name: Atlas AMER",
+          "reporting_period: 2026-Q1",
+          "revenue_millions: 35.5",
+          "operating_margin: 16.5",
+          "headcount: 210",
+          "--- RECORD ---",
+          "company_name: Atlas APAC",
+          "reporting_period: 2026-Q1",
+          "revenue_millions: 15.25",
+          "operating_margin: 11.0",
+          "headcount: 95"
+        ]
+      },
+      "schema_definition": {
+        "schema_id": "business-report-multi",
+        "schema_version": "1.0",
+        "cardinality": "multiple",
+        "fields": {
+          "company_name": {
+            "type": "string",
+            "required": true
+          },
+          "reporting_period": {
+            "type": "string",
+            "required": true
+          },
+          "revenue_millions": {
+            "type": "decimal",
+            "required": true,
+            "min_value": 0
+          },
+          "operating_margin": {
+            "type": "decimal",
+            "required": true
+          },
+          "headcount": {
+            "type": "integer",
+            "required": true,
+            "min_value": 1
+          },
+          "guidance_notes": {
+            "type": "string",
+            "required": false,
+            "nullable": true
+          }
+        }
+      },
+      "expected_status": "completed",
+      "expected_validation": "valid",
+      "expected_records": [
+        {
+          "expected_validation": "valid",
+          "fields": {
+            "company_name": {
+              "presence": "present",
+              "value": "Atlas EMEA",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "company_name: Atlas EMEA"
+              ],
+              "expect_ambiguous": false
+            },
+            "reporting_period": {
+              "presence": "present",
+              "value": "2026-Q1",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "reporting_period: 2026-Q1"
+              ],
+              "expect_ambiguous": false
+            },
+            "revenue_millions": {
+              "presence": "present",
+              "value": "20.0",
+              "match_mode": "decimal_equal",
+              "expected_evidence": [
+                "revenue_millions: 20.0"
+              ],
+              "expect_ambiguous": false
+            },
+            "operating_margin": {
+              "presence": "present",
+              "value": "12.0",
+              "match_mode": "decimal_equal",
+              "expected_evidence": [
+                "operating_margin: 12.0"
+              ],
+              "expect_ambiguous": false
+            },
+            "headcount": {
+              "presence": "present",
+              "value": 110,
+              "match_mode": "exact",
+              "expected_evidence": [
+                "headcount: 110"
+              ],
+              "expect_ambiguous": false
+            },
+            "guidance_notes": {
+              "presence": "missing",
+              "value": null,
+              "match_mode": "exact",
+              "expected_evidence": [],
+              "expect_ambiguous": false
+            }
+          }
+        },
+        {
+          "expected_validation": "valid",
+          "fields": {
+            "company_name": {
+              "presence": "present",
+              "value": "Atlas AMER",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "company_name: Atlas AMER"
+              ],
+              "expect_ambiguous": false
+            },
+            "reporting_period": {
+              "presence": "present",
+              "value": "2026-Q1",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "reporting_period: 2026-Q1"
+              ],
+              "expect_ambiguous": false
+            },
+            "revenue_millions": {
+              "presence": "present",
+              "value": "35.5",
+              "match_mode": "decimal_equal",
+              "expected_evidence": [
+                "revenue_millions: 35.5"
+              ],
+              "expect_ambiguous": false
+            },
+            "operating_margin": {
+              "presence": "present",
+              "value": "16.5",
+              "match_mode": "decimal_equal",
+              "expected_evidence": [
+                "operating_margin: 16.5"
+              ],
+              "expect_ambiguous": false
+            },
+            "headcount": {
+              "presence": "present",
+              "value": 210,
+              "match_mode": "exact",
+              "expected_evidence": [
+                "headcount: 210"
+              ],
+              "expect_ambiguous": false
+            },
+            "guidance_notes": {
+              "presence": "missing",
+              "value": null,
+              "match_mode": "exact",
+              "expected_evidence": [],
+              "expect_ambiguous": false
+            }
+          }
+        },
+        {
+          "expected_validation": "valid",
+          "fields": {
+            "company_name": {
+              "presence": "present",
+              "value": "Atlas APAC",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "company_name: Atlas APAC"
+              ],
+              "expect_ambiguous": false
+            },
+            "reporting_period": {
+              "presence": "present",
+              "value": "2026-Q1",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "reporting_period: 2026-Q1"
+              ],
+              "expect_ambiguous": false
+            },
+            "revenue_millions": {
+              "presence": "present",
+              "value": "15.25",
+              "match_mode": "decimal_equal",
+              "expected_evidence": [
+                "revenue_millions: 15.25"
+              ],
+              "expect_ambiguous": false
+            },
+            "operating_margin": {
+              "presence": "present",
+              "value": "11.0",
+              "match_mode": "decimal_equal",
+              "expected_evidence": [
+                "operating_margin: 11.0"
+              ],
+              "expect_ambiguous": false
+            },
+            "headcount": {
+              "presence": "present",
+              "value": 95,
+              "match_mode": "exact",
+              "expected_evidence": [
+                "headcount: 95"
+              ],
+              "expect_ambiguous": false
+            },
+            "guidance_notes": {
+              "presence": "missing",
+              "value": null,
+              "match_mode": "exact",
+              "expected_evidence": [],
+              "expect_ambiguous": false
+            }
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "rpt-pdf-004",
+      "category": "business_reports",
+      "format": "pdf",
+      "challenge_profiles": [
+        "conflicting_values"
+      ],
+      "description": "Multi-page PDF report with conflicting operating_margin values across pages.",
+      "document": {
+        "kind": "pdf",
+        "filename": "rpt_004_conflict.pdf",
+        "pages": [
+          "company_name: Solaris Industrial\nreporting_period: 2026-Q2\nrevenue_millions: 62.0\noperating_margin: 18.0\nheadcount: 400",
+          "operating_margin: 15.2"
+        ]
+      },
+      "schema_definition": {
+        "schema_id": "business-report-schema",
+        "schema_version": "1.0",
+        "cardinality": "single",
+        "fields": {
+          "company_name": {
+            "type": "string",
+            "required": true
+          },
+          "reporting_period": {
+            "type": "string",
+            "required": true
+          },
+          "revenue_millions": {
+            "type": "decimal",
+            "required": true,
+            "min_value": 0
+          },
+          "operating_margin": {
+            "type": "decimal",
+            "required": true
+          },
+          "headcount": {
+            "type": "integer",
+            "required": true,
+            "min_value": 1
+          },
+          "guidance_notes": {
+            "type": "string",
+            "required": false,
+            "nullable": true
+          }
+        }
+      },
+      "expected_status": "completed",
+      "expected_validation": "valid",
+      "expected_records": [
+        {
+          "expected_validation": "valid",
+          "fields": {
+            "company_name": {
+              "presence": "present",
+              "value": "Solaris Industrial",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "company_name: Solaris Industrial"
+              ],
+              "expect_ambiguous": false
+            },
+            "reporting_period": {
+              "presence": "present",
+              "value": "2026-Q2",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "reporting_period: 2026-Q2"
+              ],
+              "expect_ambiguous": false
+            },
+            "revenue_millions": {
+              "presence": "present",
+              "value": "62.0",
+              "match_mode": "decimal_equal",
+              "expected_evidence": [
+                "revenue_millions: 62.0"
+              ],
+              "expect_ambiguous": false
+            },
+            "operating_margin": {
+              "presence": "present",
+              "value": "18.0",
+              "match_mode": "decimal_equal",
+              "expected_evidence": [
+                "operating_margin: 18.0"
+              ],
+              "expect_ambiguous": true
+            },
+            "headcount": {
+              "presence": "present",
+              "value": 400,
+              "match_mode": "exact",
+              "expected_evidence": [
+                "headcount: 400"
+              ],
+              "expect_ambiguous": false
+            },
+            "guidance_notes": {
+              "presence": "missing",
+              "value": null,
+              "match_mode": "exact",
+              "expected_evidence": [],
+              "expect_ambiguous": false
+            }
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "rpt-docx-005",
+      "category": "business_reports",
+      "format": "docx",
+      "challenge_profiles": [
+        "missing_information"
+      ],
+      "description": "DOCX report with explicit null guidance_notes distinguishing present null from missing.",
+      "document": {
+        "kind": "docx",
+        "filename": "rpt_005_null.docx",
+        "lines": [
+          "company_name: Kestrel Dynamics",
+          "reporting_period: 2026-Q3",
+          "revenue_millions: 19.4",
+          "operating_margin: 9.8",
+          "headcount: 88",
+          "guidance_notes: null"
+        ]
+      },
+      "schema_definition": {
+        "schema_id": "business-report-schema",
+        "schema_version": "1.0",
+        "cardinality": "single",
+        "fields": {
+          "company_name": {
+            "type": "string",
+            "required": true
+          },
+          "reporting_period": {
+            "type": "string",
+            "required": true
+          },
+          "revenue_millions": {
+            "type": "decimal",
+            "required": true,
+            "min_value": 0
+          },
+          "operating_margin": {
+            "type": "decimal",
+            "required": true
+          },
+          "headcount": {
+            "type": "integer",
+            "required": true,
+            "min_value": 1
+          },
+          "guidance_notes": {
+            "type": "string",
+            "required": false,
+            "nullable": true
+          }
+        }
+      },
+      "expected_status": "completed",
+      "expected_validation": "valid",
+      "expected_records": [
+        {
+          "expected_validation": "valid",
+          "fields": {
+            "company_name": {
+              "presence": "present",
+              "value": "Kestrel Dynamics",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "company_name: Kestrel Dynamics"
+              ],
+              "expect_ambiguous": false
+            },
+            "reporting_period": {
+              "presence": "present",
+              "value": "2026-Q3",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "reporting_period: 2026-Q3"
+              ],
+              "expect_ambiguous": false
+            },
+            "revenue_millions": {
+              "presence": "present",
+              "value": "19.4",
+              "match_mode": "decimal_equal",
+              "expected_evidence": [
+                "revenue_millions: 19.4"
+              ],
+              "expect_ambiguous": false
+            },
+            "operating_margin": {
+              "presence": "present",
+              "value": "9.8",
+              "match_mode": "decimal_equal",
+              "expected_evidence": [
+                "operating_margin: 9.8"
+              ],
+              "expect_ambiguous": false
+            },
+            "headcount": {
+              "presence": "present",
+              "value": 88,
+              "match_mode": "exact",
+              "expected_evidence": [
+                "headcount: 88"
+              ],
+              "expect_ambiguous": false
+            },
+            "guidance_notes": {
+              "presence": "present",
+              "value": null,
+              "match_mode": "exact",
+              "expected_evidence": [
+                "guidance_notes: null"
+              ],
+              "expect_ambiguous": false
+            }
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "rpt-docx-006",
+      "category": "business_reports",
+      "format": "docx",
+      "challenge_profiles": [
+        "malformed_document"
+      ],
+      "description": "Oversized DOCX ZIP bomb expecting explicit resource_limit_exceeded failure.",
+      "document": {
+        "kind": "zip_bomb_docx",
+        "filename": "rpt_006_bomb.docx",
+        "uncompressed_bytes": 57671680
+      },
+      "schema_definition": {
+        "schema_id": "business-report-schema",
+        "schema_version": "1.0",
+        "cardinality": "single",
+        "fields": {
+          "company_name": {
+            "type": "string",
+            "required": true
+          },
+          "reporting_period": {
+            "type": "string",
+            "required": true
+          },
+          "revenue_millions": {
+            "type": "decimal",
+            "required": true,
+            "min_value": 0
+          },
+          "operating_margin": {
+            "type": "decimal",
+            "required": true
+          },
+          "headcount": {
+            "type": "integer",
+            "required": true,
+            "min_value": 1
+          },
+          "guidance_notes": {
+            "type": "string",
+            "required": false,
+            "nullable": true
+          }
+        }
+      },
+      "expected_status": "failed",
+      "expected_validation": "not_validated",
+      "expected_records": [],
+      "expected_error_codes": [
+        "resource_limit_exceeded"
+      ]
+    }
+  ]
+}

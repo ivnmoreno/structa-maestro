@@ -1,0 +1,725 @@
+{
+  "cases": [
+    {
+      "case_id": "fin-txt-001",
+      "category": "financial_documents",
+      "format": "txt",
+      "challenge_profiles": [
+        "straightforward"
+      ],
+      "description": "Straightforward TXT wire confirmation preserving leading-zero account reference.",
+      "document": {
+        "kind": "txt",
+        "filename": "fin_001.txt",
+        "lines": [
+          "account_reference: 00098412",
+          "closing_balance: 84250.75",
+          "currency: CHF",
+          "statement_date: 2026-09-30",
+          "verified: true"
+        ]
+      },
+      "schema_definition": {
+        "schema_id": "financial-schema",
+        "schema_version": "1.0",
+        "cardinality": "single",
+        "fields": {
+          "account_reference": {
+            "type": "string",
+            "required": true
+          },
+          "closing_balance": {
+            "type": "decimal",
+            "required": true
+          },
+          "currency": {
+            "type": "string",
+            "required": true,
+            "allowed_values": [
+              "USD",
+              "EUR",
+              "CHF",
+              "GBP"
+            ]
+          },
+          "statement_date": {
+            "type": "date",
+            "required": true
+          },
+          "verified": {
+            "type": "boolean",
+            "required": true
+          }
+        }
+      },
+      "expected_status": "completed",
+      "expected_validation": "valid",
+      "expected_records": [
+        {
+          "expected_validation": "valid",
+          "fields": {
+            "account_reference": {
+              "presence": "present",
+              "value": "00098412",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "account_reference: 00098412"
+              ],
+              "expect_ambiguous": false
+            },
+            "closing_balance": {
+              "presence": "present",
+              "value": "84250.75",
+              "match_mode": "decimal_equal",
+              "expected_evidence": [
+                "closing_balance: 84250.75"
+              ],
+              "expect_ambiguous": false
+            },
+            "currency": {
+              "presence": "present",
+              "value": "CHF",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "currency: CHF"
+              ],
+              "expect_ambiguous": false
+            },
+            "statement_date": {
+              "presence": "present",
+              "value": "2026-09-30",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "statement_date: 2026-09-30"
+              ],
+              "expect_ambiguous": false
+            },
+            "verified": {
+              "presence": "present",
+              "value": true,
+              "match_mode": "exact",
+              "expected_evidence": [
+                "verified: true"
+              ],
+              "expect_ambiguous": false
+            }
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "fin-pdf-002",
+      "category": "financial_documents",
+      "format": "pdf",
+      "challenge_profiles": [
+        "complex_formatting"
+      ],
+      "description": "Multi-page PDF statement with currency symbol and comma-formatted balance.",
+      "document": {
+        "kind": "pdf",
+        "filename": "fin_002.pdf",
+        "pages": [
+          "account_reference: ACC-7710\nstatement_date: 2026-10-01",
+          "closing_balance: $1,250,000.00\ncurrency: USD\nverified: true"
+        ]
+      },
+      "schema_definition": {
+        "schema_id": "financial-schema",
+        "schema_version": "1.0",
+        "cardinality": "single",
+        "fields": {
+          "account_reference": {
+            "type": "string",
+            "required": true
+          },
+          "closing_balance": {
+            "type": "decimal",
+            "required": true
+          },
+          "currency": {
+            "type": "string",
+            "required": true,
+            "allowed_values": [
+              "USD",
+              "EUR",
+              "CHF",
+              "GBP"
+            ]
+          },
+          "statement_date": {
+            "type": "date",
+            "required": true
+          },
+          "verified": {
+            "type": "boolean",
+            "required": true
+          }
+        }
+      },
+      "expected_status": "completed",
+      "expected_validation": "valid",
+      "expected_records": [
+        {
+          "expected_validation": "valid",
+          "fields": {
+            "account_reference": {
+              "presence": "present",
+              "value": "ACC-7710",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "account_reference: ACC-7710"
+              ],
+              "expect_ambiguous": false
+            },
+            "closing_balance": {
+              "presence": "present",
+              "value": "1250000.00",
+              "match_mode": "decimal_equal",
+              "expected_evidence": [
+                "closing_balance: $1,250,000.00"
+              ],
+              "expect_ambiguous": false
+            },
+            "currency": {
+              "presence": "present",
+              "value": "USD",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "currency: USD"
+              ],
+              "expect_ambiguous": false
+            },
+            "statement_date": {
+              "presence": "present",
+              "value": "2026-10-01",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "statement_date: 2026-10-01"
+              ],
+              "expect_ambiguous": false
+            },
+            "verified": {
+              "presence": "present",
+              "value": true,
+              "match_mode": "exact",
+              "expected_evidence": [
+                "verified: true"
+              ],
+              "expect_ambiguous": false
+            }
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "fin-docx-003",
+      "category": "financial_documents",
+      "format": "docx",
+      "challenge_profiles": [
+        "multiple_records"
+      ],
+      "description": "Multi-account DOCX summary evaluated with unordered alignment.",
+      "document": {
+        "kind": "docx",
+        "filename": "fin_003_multi.docx",
+        "lines": [
+          "account_reference: ACC-01",
+          "closing_balance: 5000.00",
+          "currency: EUR",
+          "statement_date: 2026-10-05",
+          "verified: true",
+          "--- RECORD ---",
+          "account_reference: ACC-02",
+          "closing_balance: 9200.50",
+          "currency: GBP",
+          "statement_date: 2026-10-05",
+          "verified: false"
+        ]
+      },
+      "schema_definition": {
+        "schema_id": "financial-multi",
+        "schema_version": "1.0",
+        "cardinality": "multiple",
+        "fields": {
+          "account_reference": {
+            "type": "string",
+            "required": true
+          },
+          "closing_balance": {
+            "type": "decimal",
+            "required": true
+          },
+          "currency": {
+            "type": "string",
+            "required": true,
+            "allowed_values": [
+              "USD",
+              "EUR",
+              "CHF",
+              "GBP"
+            ]
+          },
+          "statement_date": {
+            "type": "date",
+            "required": true
+          },
+          "verified": {
+            "type": "boolean",
+            "required": true
+          }
+        }
+      },
+      "expected_status": "completed",
+      "expected_validation": "valid",
+      "record_order": "unordered",
+      "match_key_field": "account_reference",
+      "expected_records": [
+        {
+          "expected_validation": "valid",
+          "fields": {
+            "account_reference": {
+              "presence": "present",
+              "value": "ACC-02",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "account_reference: ACC-02"
+              ],
+              "expect_ambiguous": false
+            },
+            "closing_balance": {
+              "presence": "present",
+              "value": "9200.50",
+              "match_mode": "decimal_equal",
+              "expected_evidence": [
+                "closing_balance: 9200.50"
+              ],
+              "expect_ambiguous": false
+            },
+            "currency": {
+              "presence": "present",
+              "value": "GBP",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "currency: GBP"
+              ],
+              "expect_ambiguous": false
+            },
+            "statement_date": {
+              "presence": "present",
+              "value": "2026-10-05",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "statement_date: 2026-10-05"
+              ],
+              "expect_ambiguous": false
+            },
+            "verified": {
+              "presence": "present",
+              "value": false,
+              "match_mode": "exact",
+              "expected_evidence": [
+                "verified: false"
+              ],
+              "expect_ambiguous": false
+            }
+          }
+        },
+        {
+          "expected_validation": "valid",
+          "fields": {
+            "account_reference": {
+              "presence": "present",
+              "value": "ACC-01",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "account_reference: ACC-01"
+              ],
+              "expect_ambiguous": false
+            },
+            "closing_balance": {
+              "presence": "present",
+              "value": "5000.00",
+              "match_mode": "decimal_equal",
+              "expected_evidence": [
+                "closing_balance: 5000.00"
+              ],
+              "expect_ambiguous": false
+            },
+            "currency": {
+              "presence": "present",
+              "value": "EUR",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "currency: EUR"
+              ],
+              "expect_ambiguous": false
+            },
+            "statement_date": {
+              "presence": "present",
+              "value": "2026-10-05",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "statement_date: 2026-10-05"
+              ],
+              "expect_ambiguous": false
+            },
+            "verified": {
+              "presence": "present",
+              "value": true,
+              "match_mode": "exact",
+              "expected_evidence": [
+                "verified: true"
+              ],
+              "expect_ambiguous": false
+            }
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "fin-txt-004",
+      "category": "financial_documents",
+      "format": "txt",
+      "challenge_profiles": [
+        "conflicting_values"
+      ],
+      "description": "TXT ledger extract containing two conflicting closing_balance figures.",
+      "document": {
+        "kind": "txt",
+        "filename": "fin_004_conflict.txt",
+        "lines": [
+          "account_reference: ACC-404",
+          "closing_balance: 4100.00",
+          "closing_balance: 4950.00",
+          "currency: USD",
+          "statement_date: 2026-10-10",
+          "verified: false"
+        ]
+      },
+      "schema_definition": {
+        "schema_id": "financial-schema",
+        "schema_version": "1.0",
+        "cardinality": "single",
+        "fields": {
+          "account_reference": {
+            "type": "string",
+            "required": true
+          },
+          "closing_balance": {
+            "type": "decimal",
+            "required": true
+          },
+          "currency": {
+            "type": "string",
+            "required": true,
+            "allowed_values": [
+              "USD",
+              "EUR",
+              "CHF",
+              "GBP"
+            ]
+          },
+          "statement_date": {
+            "type": "date",
+            "required": true
+          },
+          "verified": {
+            "type": "boolean",
+            "required": true
+          }
+        }
+      },
+      "expected_status": "completed",
+      "expected_validation": "valid",
+      "expected_records": [
+        {
+          "expected_validation": "valid",
+          "fields": {
+            "account_reference": {
+              "presence": "present",
+              "value": "ACC-404",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "account_reference: ACC-404"
+              ],
+              "expect_ambiguous": false
+            },
+            "closing_balance": {
+              "presence": "present",
+              "value": "4100.00",
+              "match_mode": "decimal_equal",
+              "expected_evidence": [
+                "closing_balance: 4100.00"
+              ],
+              "expect_ambiguous": true
+            },
+            "currency": {
+              "presence": "present",
+              "value": "USD",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "currency: USD"
+              ],
+              "expect_ambiguous": false
+            },
+            "statement_date": {
+              "presence": "present",
+              "value": "2026-10-10",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "statement_date: 2026-10-10"
+              ],
+              "expect_ambiguous": false
+            },
+            "verified": {
+              "presence": "present",
+              "value": false,
+              "match_mode": "exact",
+              "expected_evidence": [
+                "verified: false"
+              ],
+              "expect_ambiguous": false
+            }
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "fin-pdf-005",
+      "category": "financial_documents",
+      "format": "pdf",
+      "challenge_profiles": [
+        "nested_records"
+      ],
+      "description": "PDF settlement confirmation with nested settlement object.",
+      "document": {
+        "kind": "pdf",
+        "filename": "fin_005_nested.pdf",
+        "pages": [
+          "account_reference: ACC-909\nsettlement.amount: 25000.00\nsettlement.currency: CHF\nsettlement.value_date: 2026-10-15"
+        ]
+      },
+      "schema_definition": {
+        "schema_id": "financial-nested",
+        "schema_version": "1.0",
+        "cardinality": "single",
+        "fields": {
+          "account_reference": {
+            "type": "string",
+            "required": true
+          },
+          "settlement": {
+            "type": "object",
+            "required": true,
+            "properties": {
+              "amount": {
+                "type": "decimal",
+                "required": true,
+                "min_value": 0
+              },
+              "currency": {
+                "type": "string",
+                "required": true
+              },
+              "value_date": {
+                "type": "date",
+                "required": true
+              }
+            }
+          }
+        }
+      },
+      "expected_status": "completed",
+      "expected_validation": "valid",
+      "expected_records": [
+        {
+          "expected_validation": "valid",
+          "fields": {
+            "account_reference": {
+              "presence": "present",
+              "value": "ACC-909",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "account_reference: ACC-909"
+              ],
+              "expect_ambiguous": false
+            },
+            "settlement": {
+              "presence": "present",
+              "value": {
+                "amount": "25000.00",
+                "currency": "CHF",
+                "value_date": "2026-10-15"
+              },
+              "match_mode": "exact",
+              "expected_evidence": [
+                "settlement.amount: 25000.00",
+                "settlement.currency: CHF"
+              ],
+              "expect_ambiguous": false
+            }
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "fin-txt-006",
+      "category": "financial_documents",
+      "format": "txt",
+      "challenge_profiles": [
+        "unsupported_or_incomplete"
+      ],
+      "description": "Misleading .txt extension containing valid PDF bytes detected safely via magic bytes.",
+      "document": {
+        "kind": "misleading_pdf_as_txt",
+        "filename": "fin_006_disguised.txt",
+        "pages": [
+          "account_reference: ACC-555\nclosing_balance: 310.00\ncurrency: USD\nstatement_date: 2026-10-18\nverified: true"
+        ]
+      },
+      "schema_definition": {
+        "schema_id": "financial-schema",
+        "schema_version": "1.0",
+        "cardinality": "single",
+        "fields": {
+          "account_reference": {
+            "type": "string",
+            "required": true
+          },
+          "closing_balance": {
+            "type": "decimal",
+            "required": true
+          },
+          "currency": {
+            "type": "string",
+            "required": true,
+            "allowed_values": [
+              "USD",
+              "EUR",
+              "CHF",
+              "GBP"
+            ]
+          },
+          "statement_date": {
+            "type": "date",
+            "required": true
+          },
+          "verified": {
+            "type": "boolean",
+            "required": true
+          }
+        }
+      },
+      "expected_status": "completed",
+      "expected_validation": "valid",
+      "expected_records": [
+        {
+          "expected_validation": "valid",
+          "fields": {
+            "account_reference": {
+              "presence": "present",
+              "value": "ACC-555",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "account_reference: ACC-555"
+              ],
+              "expect_ambiguous": false
+            },
+            "closing_balance": {
+              "presence": "present",
+              "value": "310.00",
+              "match_mode": "decimal_equal",
+              "expected_evidence": [
+                "closing_balance: 310.00"
+              ],
+              "expect_ambiguous": false
+            },
+            "currency": {
+              "presence": "present",
+              "value": "USD",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "currency: USD"
+              ],
+              "expect_ambiguous": false
+            },
+            "statement_date": {
+              "presence": "present",
+              "value": "2026-10-18",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "statement_date: 2026-10-18"
+              ],
+              "expect_ambiguous": false
+            },
+            "verified": {
+              "presence": "present",
+              "value": true,
+              "match_mode": "exact",
+              "expected_evidence": [
+                "verified: true"
+              ],
+              "expect_ambiguous": false
+            }
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "fin-pdf-007",
+      "category": "financial_documents",
+      "format": "pdf",
+      "challenge_profiles": [
+        "unsupported_or_incomplete",
+        "malformed_document"
+      ],
+      "description": "Misleading .pdf extension containing plain text safely rejected with unsupported_format.",
+      "document": {
+        "kind": "misleading_txt_as_pdf",
+        "filename": "fin_007_fake.pdf",
+        "lines": [
+          "account_reference: ACC-000"
+        ]
+      },
+      "schema_definition": {
+        "schema_id": "financial-schema",
+        "schema_version": "1.0",
+        "cardinality": "single",
+        "fields": {
+          "account_reference": {
+            "type": "string",
+            "required": true
+          },
+          "closing_balance": {
+            "type": "decimal",
+            "required": true
+          },
+          "currency": {
+            "type": "string",
+            "required": true,
+            "allowed_values": [
+              "USD",
+              "EUR",
+              "CHF",
+              "GBP"
+            ]
+          },
+          "statement_date": {
+            "type": "date",
+            "required": true
+          },
+          "verified": {
+            "type": "boolean",
+            "required": true
+          }
+        }
+      },
+      "expected_status": "failed",
+      "expected_validation": "not_validated",
+      "expected_records": [],
+      "expected_error_codes": [
+        "unsupported_format"
+      ]
+    }
+  ]
+}

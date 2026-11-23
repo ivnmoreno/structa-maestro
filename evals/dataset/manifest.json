@@ -1,0 +1,14 @@
+{
+  "dataset_version": "2.0.0",
+  "description": "Curated 50-case synthetic golden evaluation corpus for structa-maestro spanning all 8 business document categories, all 3 supported formats (TXT, PDF, DOCX), and all 10 challenge profiles.",
+  "category_files": [
+    "invoices.json",
+    "contracts.json",
+    "employment_documents.json",
+    "applications.json",
+    "business_reports.json",
+    "correspondence.json",
+    "financial_documents.json",
+    "administrative_forms.json"
+  ]
+}

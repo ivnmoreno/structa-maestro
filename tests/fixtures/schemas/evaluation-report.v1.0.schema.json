@@ -1,0 +1,199 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://structa-maestro.dev/evals/evaluation-report/v1.0.schema.json",
+  "title": "structa-maestro Golden Evaluation Report v1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "report_version",
+    "dataset_version",
+    "strategy_name",
+    "config_version",
+    "executed_at",
+    "trials",
+    "filters",
+    "summary",
+    "trial_summaries",
+    "trial_distribution",
+    "by_category",
+    "by_profile",
+    "cases"
+  ],
+  "properties": {
+    "report_version": { "type": "string", "const": "1.0" },
+    "dataset_version": { "type": "string", "minLength": 1 },
+    "strategy_name": { "type": "string", "minLength": 1 },
+    "config_version": { "type": "string", "minLength": 1 },
+    "executed_at": { "type": "string", "minLength": 1 },
+    "trials": { "type": "integer", "minimum": 1 },
+    "filters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["categories", "formats", "profiles", "case_ids", "is_filtered"],
+      "properties": {
+        "categories": { "type": "array", "items": { "type": "string" } },
+        "formats": { "type": "array", "items": { "type": "string" } },
+        "profiles": { "type": "array", "items": { "type": "string" } },
+        "case_ids": { "type": "array", "items": { "type": "string" } },
+        "is_filtered": { "type": "boolean" }
+      }
+    },
+    "summary": { "$ref": "#/$defs/MetricSummary" },
+    "trial_summaries": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/MetricSummary" }
+    },
+    "trial_distribution": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/TrialStat" }
+        },
+        { "type": "null" }
+      ]
+    },
+    "by_category": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/MetricSummary" }
+    },
+    "by_profile": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/MetricSummary" }
+    },
+    "cases": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/CaseOutcome" }
+    }
+  },
+  "$defs": {
+    "TrialStat": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mean", "min", "max"],
+      "properties": {
+        "mean": { "type": "number" },
+        "min": { "type": "number" },
+        "max": { "type": "number" }
+      }
+    },
+    "MetricSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "total_cases",
+        "total_fields",
+        "expected_present_fields",
+        "expected_missing_fields",
+        "hallucination_count",
+        "expected_provenance_fields",
+        "field_exact_match_accuracy",
+        "field_precision",
+        "field_recall",
+        "field_f1",
+        "record_completeness",
+        "record_level_accuracy",
+        "false_extraction_rate",
+        "missing_field_rate",
+        "hallucination_rate",
+        "provenance_accuracy",
+        "validation_pass_rate",
+        "processing_failure_rate",
+        "mean_latency_ms",
+        "max_latency_ms"
+      ],
+      "properties": {
+        "total_cases": { "type": "integer", "minimum": 0 },
+        "total_fields": { "type": "integer", "minimum": 0 },
+        "expected_present_fields": { "type": "integer", "minimum": 0 },
+        "expected_missing_fields": { "type": "integer", "minimum": 0 },
+        "hallucination_count": { "type": "integer", "minimum": 0 },
+        "expected_provenance_fields": { "type": "integer", "minimum": 0 },
+        "field_exact_match_accuracy": { "type": "number", "minimum": 0, "maximum": 1 },
+        "field_precision": { "type": "number", "minimum": 0, "maximum": 1 },
+        "field_recall": { "type": "number", "minimum": 0, "maximum": 1 },
+        "field_f1": { "type": "number", "minimum": 0, "maximum": 1 },
+        "record_completeness": { "type": "number", "minimum": 0, "maximum": 1 },
+        "record_level_accuracy": { "type": "number", "minimum": 0, "maximum": 1 },
+        "false_extraction_rate": { "type": "number", "minimum": 0, "maximum": 1 },
+        "missing_field_rate": { "type": "number", "minimum": 0, "maximum": 1 },
+        "hallucination_rate": { "type": "number", "minimum": 0, "maximum": 1 },
+        "provenance_accuracy": { "type": "number", "minimum": 0, "maximum": 1 },
+        "validation_pass_rate": { "type": "number", "minimum": 0, "maximum": 1 },
+        "processing_failure_rate": { "type": "number", "minimum": 0, "maximum": 1 },
+        "mean_latency_ms": { "type": "number", "minimum": 0 },
+        "max_latency_ms": { "type": "number", "minimum": 0 }
+      }
+    },
+    "FieldScore": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "field_name",
+        "expected_presence",
+        "actual_presence",
+        "matched",
+        "hallucinated",
+        "provenance_expected",
+        "provenance_verified",
+        "ambiguity_expected",
+        "ambiguity_handled"
+      ],
+      "properties": {
+        "field_name": { "type": "string", "minLength": 1 },
+        "expected_presence": { "type": "string", "enum": ["present", "missing"] },
+        "actual_presence": { "type": "string", "enum": ["present", "missing"] },
+        "matched": { "type": "boolean" },
+        "hallucinated": { "type": "boolean" },
+        "provenance_expected": { "type": "boolean" },
+        "provenance_verified": { "type": "boolean" },
+        "ambiguity_expected": { "type": "boolean" },
+        "ambiguity_handled": { "type": "boolean" }
+      }
+    },
+    "CaseOutcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "case_id",
+        "category",
+        "format",
+        "challenge_profiles",
+        "trial_index",
+        "expected_status",
+        "actual_status",
+        "status_matched",
+        "expected_validation",
+        "actual_validation",
+        "validation_matched",
+        "error_codes_matched",
+        "runtime_error",
+        "latency_ms",
+        "field_scores",
+        "record_completeness",
+        "record_exact_accuracy",
+        "passed"
+      ],
+      "properties": {
+        "case_id": { "type": "string", "minLength": 1 },
+        "category": { "type": "string", "minLength": 1 },
+        "format": { "type": "string", "enum": ["txt", "pdf", "docx"] },
+        "challenge_profiles": { "type": "array", "items": { "type": "string" } },
+        "trial_index": { "type": "integer", "minimum": 1 },
+        "expected_status": { "type": "string", "enum": ["completed", "partial", "failed"] },
+        "actual_status": { "type": "string", "enum": ["completed", "partial", "failed"] },
+        "status_matched": { "type": "boolean" },
+        "expected_validation": { "type": "string", "enum": ["valid", "invalid", "not_validated"] },
+        "actual_validation": { "type": "string", "enum": ["valid", "invalid", "not_validated"] },
+        "validation_matched": { "type": "boolean" },
+        "error_codes_matched": { "type": "boolean" },
+        "runtime_error": { "type": ["string", "null"] },
+        "latency_ms": { "type": "number", "minimum": 0 },
+        "field_scores": { "type": "array", "items": { "$ref": "#/$defs/FieldScore" } },
+        "record_completeness": { "type": "number", "minimum": 0, "maximum": 1 },
+        "record_exact_accuracy": { "type": "number", "minimum": 0, "maximum": 1 },
+        "passed": { "type": "boolean" }
+      }
+    }
+  }
+}

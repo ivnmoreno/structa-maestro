@@ -28,7 +28,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
       - name: Static security lint (CI-011)
-        run: ruff check --select S src/
+        run: ruff check --select S src/ evals/
       - name: Run security and adversarial test suite (CI-011)
         run: pytest tests/security/ -v
       - name: Dependency vulnerability scan (CI-012)

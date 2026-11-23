@@ -1,0 +1,662 @@
+{
+  "cases": [
+    {
+      "case_id": "emp-docx-001",
+      "category": "employment_documents",
+      "format": "docx",
+      "challenge_profiles": [
+        "straightforward"
+      ],
+      "description": "Straightforward DOCX employment offer letter.",
+      "document": {
+        "kind": "docx",
+        "filename": "emp_001.docx",
+        "headings": [
+          "Employment Agreement"
+        ],
+        "lines": [
+          "employee_id: EMP-0042",
+          "employee_name: Elena Vance",
+          "position: Senior Data Engineer",
+          "employer: Helvetia Analytics",
+          "start_date: 2026-06-01"
+        ]
+      },
+      "schema_definition": {
+        "schema_id": "employment-schema",
+        "schema_version": "1.0",
+        "cardinality": "single",
+        "fields": {
+          "employee_id": {
+            "type": "string",
+            "required": true,
+            "pattern": "^EMP-\\d{4}$"
+          },
+          "employee_name": {
+            "type": "string",
+            "required": true
+          },
+          "position": {
+            "type": "string",
+            "required": true
+          },
+          "employer": {
+            "type": "string",
+            "required": true
+          },
+          "start_date": {
+            "type": "date",
+            "required": true
+          },
+          "bonus_target": {
+            "type": "decimal",
+            "required": false,
+            "min_value": 0
+          }
+        }
+      },
+      "expected_status": "completed",
+      "expected_validation": "valid",
+      "expected_records": [
+        {
+          "expected_validation": "valid",
+          "fields": {
+            "employee_id": {
+              "presence": "present",
+              "value": "EMP-0042",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "employee_id: EMP-0042"
+              ],
+              "expect_ambiguous": false
+            },
+            "employee_name": {
+              "presence": "present",
+              "value": "Elena Vance",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "employee_name: Elena Vance"
+              ],
+              "expect_ambiguous": false
+            },
+            "position": {
+              "presence": "present",
+              "value": "Senior Data Engineer",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "position: Senior Data Engineer"
+              ],
+              "expect_ambiguous": false
+            },
+            "employer": {
+              "presence": "present",
+              "value": "Helvetia Analytics",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "employer: Helvetia Analytics"
+              ],
+              "expect_ambiguous": false
+            },
+            "start_date": {
+              "presence": "present",
+              "value": "2026-06-01",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "start_date: 2026-06-01"
+              ],
+              "expect_ambiguous": false
+            },
+            "bonus_target": {
+              "presence": "missing",
+              "value": null,
+              "match_mode": "exact",
+              "expected_evidence": [],
+              "expect_ambiguous": false
+            }
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "emp-txt-002",
+      "category": "employment_documents",
+      "format": "txt",
+      "challenge_profiles": [
+        "missing_information"
+      ],
+      "description": "TXT employment letter missing required employee_id and optional bonus_target.",
+      "document": {
+        "kind": "txt",
+        "filename": "emp_002_missing.txt",
+        "lines": [
+          "employee_name: Jonas Weber",
+          "position: Product Analyst",
+          "employer: Nordic Labs",
+          "start_date: 2026-07-01"
+        ]
+      },
+      "schema_definition": {
+        "schema_id": "employment-schema",
+        "schema_version": "1.0",
+        "cardinality": "single",
+        "fields": {
+          "employee_id": {
+            "type": "string",
+            "required": true,
+            "pattern": "^EMP-\\d{4}$"
+          },
+          "employee_name": {
+            "type": "string",
+            "required": true
+          },
+          "position": {
+            "type": "string",
+            "required": true
+          },
+          "employer": {
+            "type": "string",
+            "required": true
+          },
+          "start_date": {
+            "type": "date",
+            "required": true
+          },
+          "bonus_target": {
+            "type": "decimal",
+            "required": false,
+            "min_value": 0
+          }
+        }
+      },
+      "expected_status": "completed",
+      "expected_validation": "invalid",
+      "expected_records": [
+        {
+          "expected_validation": "invalid",
+          "fields": {
+            "employee_id": {
+              "presence": "missing",
+              "value": null,
+              "match_mode": "exact",
+              "expected_evidence": [],
+              "expect_ambiguous": false
+            },
+            "employee_name": {
+              "presence": "present",
+              "value": "Jonas Weber",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "employee_name: Jonas Weber"
+              ],
+              "expect_ambiguous": false
+            },
+            "position": {
+              "presence": "present",
+              "value": "Product Analyst",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "position: Product Analyst"
+              ],
+              "expect_ambiguous": false
+            },
+            "employer": {
+              "presence": "present",
+              "value": "Nordic Labs",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "employer: Nordic Labs"
+              ],
+              "expect_ambiguous": false
+            },
+            "start_date": {
+              "presence": "present",
+              "value": "2026-07-01",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "start_date: 2026-07-01"
+              ],
+              "expect_ambiguous": false
+            },
+            "bonus_target": {
+              "presence": "missing",
+              "value": null,
+              "match_mode": "exact",
+              "expected_evidence": [],
+              "expect_ambiguous": false
+            }
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "emp-pdf-003",
+      "category": "employment_documents",
+      "format": "pdf",
+      "challenge_profiles": [
+        "multiple_records"
+      ],
+      "description": "Multi-record PDF roster with one valid and one invalid employee_id.",
+      "document": {
+        "kind": "pdf",
+        "filename": "emp_003_roster.pdf",
+        "pages": [
+          "employee_id: EMP-0101\nemployee_name: Clara Lin\nposition: Architect\nemployer: Apex Tech\nstart_date: 2026-08-01\n--- RECORD ---\nemployee_id: BAD-ID\nemployee_name: David Park\nposition: Designer\nemployer: Apex Tech\nstart_date: 2026-08-15"
+        ]
+      },
+      "schema_definition": {
+        "schema_id": "employment-multi-schema",
+        "schema_version": "1.0",
+        "cardinality": "multiple",
+        "fields": {
+          "employee_id": {
+            "type": "string",
+            "required": true,
+            "pattern": "^EMP-\\d{4}$"
+          },
+          "employee_name": {
+            "type": "string",
+            "required": true
+          },
+          "position": {
+            "type": "string",
+            "required": true
+          },
+          "employer": {
+            "type": "string",
+            "required": true
+          },
+          "start_date": {
+            "type": "date",
+            "required": true
+          },
+          "bonus_target": {
+            "type": "decimal",
+            "required": false,
+            "min_value": 0
+          }
+        }
+      },
+      "expected_status": "completed",
+      "expected_validation": "invalid",
+      "expected_records": [
+        {
+          "expected_validation": "valid",
+          "fields": {
+            "employee_id": {
+              "presence": "present",
+              "value": "EMP-0101",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "employee_id: EMP-0101"
+              ],
+              "expect_ambiguous": false
+            },
+            "employee_name": {
+              "presence": "present",
+              "value": "Clara Lin",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "employee_name: Clara Lin"
+              ],
+              "expect_ambiguous": false
+            },
+            "position": {
+              "presence": "present",
+              "value": "Architect",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "position: Architect"
+              ],
+              "expect_ambiguous": false
+            },
+            "employer": {
+              "presence": "present",
+              "value": "Apex Tech",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "employer: Apex Tech"
+              ],
+              "expect_ambiguous": false
+            },
+            "start_date": {
+              "presence": "present",
+              "value": "2026-08-01",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "start_date: 2026-08-01"
+              ],
+              "expect_ambiguous": false
+            },
+            "bonus_target": {
+              "presence": "missing",
+              "value": null,
+              "match_mode": "exact",
+              "expected_evidence": [],
+              "expect_ambiguous": false
+            }
+          }
+        },
+        {
+          "expected_validation": "invalid",
+          "fields": {
+            "employee_id": {
+              "presence": "present",
+              "value": "BAD-ID",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "employee_id: BAD-ID"
+              ],
+              "expect_ambiguous": false
+            },
+            "employee_name": {
+              "presence": "present",
+              "value": "David Park",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "employee_name: David Park"
+              ],
+              "expect_ambiguous": false
+            },
+            "position": {
+              "presence": "present",
+              "value": "Designer",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "position: Designer"
+              ],
+              "expect_ambiguous": false
+            },
+            "employer": {
+              "presence": "present",
+              "value": "Apex Tech",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "employer: Apex Tech"
+              ],
+              "expect_ambiguous": false
+            },
+            "start_date": {
+              "presence": "present",
+              "value": "2026-08-15",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "start_date: 2026-08-15"
+              ],
+              "expect_ambiguous": false
+            },
+            "bonus_target": {
+              "presence": "missing",
+              "value": null,
+              "match_mode": "exact",
+              "expected_evidence": [],
+              "expect_ambiguous": false
+            }
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "emp-docx-004",
+      "category": "employment_documents",
+      "format": "docx",
+      "challenge_profiles": [
+        "nested_records"
+      ],
+      "description": "DOCX compensation package with nested compensation object and skills array.",
+      "document": {
+        "kind": "docx",
+        "filename": "emp_004_nested.docx",
+        "lines": [
+          "employee_name: Sofia Rossi",
+          "compensation.base_salary: 115000.00",
+          "compensation.currency: EUR",
+          "skills: python, sql, validation"
+        ]
+      },
+      "schema_definition": {
+        "schema_id": "employment-nested-schema",
+        "schema_version": "1.0",
+        "cardinality": "single",
+        "fields": {
+          "employee_name": {
+            "type": "string",
+            "required": true
+          },
+          "compensation": {
+            "type": "object",
+            "required": true,
+            "properties": {
+              "base_salary": {
+                "type": "decimal",
+                "required": true,
+                "min_value": 0
+              },
+              "currency": {
+                "type": "string",
+                "required": true
+              }
+            }
+          },
+          "skills": {
+            "type": "array",
+            "required": true,
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "expected_status": "completed",
+      "expected_validation": "valid",
+      "expected_records": [
+        {
+          "expected_validation": "valid",
+          "fields": {
+            "employee_name": {
+              "presence": "present",
+              "value": "Sofia Rossi",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "employee_name: Sofia Rossi"
+              ],
+              "expect_ambiguous": false
+            },
+            "compensation": {
+              "presence": "present",
+              "value": {
+                "base_salary": "115000.00",
+                "currency": "EUR"
+              },
+              "match_mode": "exact",
+              "expected_evidence": [
+                "compensation.base_salary: 115000.00",
+                "compensation.currency: EUR"
+              ],
+              "expect_ambiguous": false
+            },
+            "skills": {
+              "presence": "present",
+              "value": [
+                "python",
+                "sql",
+                "validation"
+              ],
+              "match_mode": "exact",
+              "expected_evidence": [
+                "skills: python, sql, validation"
+              ],
+              "expect_ambiguous": false
+            }
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "emp-txt-005",
+      "category": "employment_documents",
+      "format": "txt",
+      "challenge_profiles": [
+        "complex_formatting"
+      ],
+      "description": "UTF-8 BOM TXT employment record with accented Unicode name (casefold_ws) and leading zeros.",
+      "document": {
+        "kind": "txt",
+        "filename": "emp_005_unicode.txt",
+        "encoding": "utf-8-sig",
+        "lines": [
+          "employee_id: EMP-0007",
+          "employee_name: Jürgen   Müller",
+          "position: Lead Researcher",
+          "employer: Zürich Institut",
+          "start_date: 2026-09-01"
+        ]
+      },
+      "schema_definition": {
+        "schema_id": "employment-schema",
+        "schema_version": "1.0",
+        "cardinality": "single",
+        "fields": {
+          "employee_id": {
+            "type": "string",
+            "required": true,
+            "pattern": "^EMP-\\d{4}$"
+          },
+          "employee_name": {
+            "type": "string",
+            "required": true
+          },
+          "position": {
+            "type": "string",
+            "required": true
+          },
+          "employer": {
+            "type": "string",
+            "required": true
+          },
+          "start_date": {
+            "type": "date",
+            "required": true
+          },
+          "bonus_target": {
+            "type": "decimal",
+            "required": false,
+            "min_value": 0
+          }
+        }
+      },
+      "expected_status": "completed",
+      "expected_validation": "valid",
+      "expected_records": [
+        {
+          "expected_validation": "valid",
+          "fields": {
+            "employee_id": {
+              "presence": "present",
+              "value": "EMP-0007",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "employee_id: EMP-0007"
+              ],
+              "expect_ambiguous": false
+            },
+            "employee_name": {
+              "presence": "present",
+              "value": "jürgen müller",
+              "match_mode": "casefold_ws",
+              "expected_evidence": [
+                "employee_name: Jürgen   Müller"
+              ],
+              "expect_ambiguous": false
+            },
+            "position": {
+              "presence": "present",
+              "value": "Lead Researcher",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "position: Lead Researcher"
+              ],
+              "expect_ambiguous": false
+            },
+            "employer": {
+              "presence": "present",
+              "value": "Zürich Institut",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "employer: Zürich Institut"
+              ],
+              "expect_ambiguous": false
+            },
+            "start_date": {
+              "presence": "present",
+              "value": "2026-09-01",
+              "match_mode": "exact",
+              "expected_evidence": [
+                "start_date: 2026-09-01"
+              ],
+              "expect_ambiguous": false
+            },
+            "bonus_target": {
+              "presence": "missing",
+              "value": null,
+              "match_mode": "exact",
+              "expected_evidence": [],
+              "expect_ambiguous": false
+            }
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "emp-pdf-006",
+      "category": "employment_documents",
+      "format": "pdf",
+      "challenge_profiles": [
+        "unsupported_or_incomplete"
+      ],
+      "description": "Image-only PDF employment scan lacking extractable text layer.",
+      "document": {
+        "kind": "image_only_pdf",
+        "filename": "emp_006_scan.pdf"
+      },
+      "schema_definition": {
+        "schema_id": "employment-schema",
+        "schema_version": "1.0",
+        "cardinality": "single",
+        "fields": {
+          "employee_id": {
+            "type": "string",
+            "required": true,
+            "pattern": "^EMP-\\d{4}$"
+          },
+          "employee_name": {
+            "type": "string",
+            "required": true
+          },
+          "position": {
+            "type": "string",
+            "required": true
+          },
+          "employer": {
+            "type": "string",
+            "required": true
+          },
+          "start_date": {
+            "type": "date",
+            "required": true
+          },
+          "bonus_target": {
+            "type": "decimal",
+            "required": false,
+            "min_value": 0
+          }
+        }
+      },
+      "expected_status": "failed",
+      "expected_validation": "not_validated",
+      "expected_records": [],
+      "expected_error_codes": [
+        "no_extractable_text"
+      ]
+    }
+  ]
+}
