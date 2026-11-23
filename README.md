@@ -102,6 +102,8 @@ print(result.status, result.validation.status)
 print(result.to_json(indent=2))
 ```
 
+By default, `OpenAICompatibleLLMStrategy` enables strict schema-guided structured outputs with automatic `json_object` compatibility fallback, bounded exponential-backoff retries (`max_retries=2`, honoring `Retry-After`), a `120,000`-character input budget (`overflow_policy="reject"`), and embedded delimiter neutralization against prompt injection. See [Configuration & Security](docs/configuration.md) and [examples/hardened_llm_strategy_example.py](examples/hardened_llm_strategy_example.py) to customize these policies.
+
 For offline deterministic tests or custom extraction logic without external API keys, see `DeterministicTestStrategy` and [examples/](examples/).
 
 ---

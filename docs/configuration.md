@@ -27,6 +27,51 @@ When using `OpenAICompatibleLLMStrategy`:
 - **Document Input Budget (`InputBudgetPolicy`)**: Enforces `max_input_chars=120_000` by default (overrideable to any positive integer or `None` to disable) with `overflow_policy="reject"` (fails pre-network with `input_budget_exceeded`) or `overflow_policy="truncate"` (truncates on a clean line boundary, forces `partial` status, and emits `input_truncated`).
 - **Prompt Injection Defense**: Every call wraps prepared text in a fresh cryptographic nonce tag (`<untrusted_document nonce="...">`) separated from system instructions, neutralizes embedded `<untrusted_document`/`</untrusted_document` tags inside prompt text without mutating `PreparedDocument` for provenance verification, and independently rejects schema-violating or extra injected fields during deterministic validation.
 
+### LLM Reliability & Input Budget Defaults
+
+| Control | Default | CLI Flag | Behavior |
+| --- | --- | --- | --- |
+| `structured_output_mode` | `strict_with_fallback` | `--structured-output-mode` | Sends strict `json_schema`; falls back once to `json_object` if unsupported |
+| `RetryPolicy.max_retries` | `2` | `--max-retries` | Bounded retries on `408`/`429`/`5xx`, timeouts, transport errors, and malformed JSON |
+| `RetryPolicy.initial_backoff_seconds` | `0.5` | *(Python API)* | Base exponential backoff delay (seconds) |
+| `RetryPolicy.max_backoff_seconds` | `8.0` | *(Python API)* | Upper backoff cap (also bounds parsed `Retry-After` delays) |
+| `RetryPolicy.jitter` | `True` | *(Python API)* | Equal jitter in `[0.5 * base, base]` to prevent retry storms |
+| `RetryPolicy.retry_on_malformed_output` | `True` | *(Python API)* | Retries empty, unparseable, or truncated model JSON within `max_retries` |
+| `RetryPolicy.max_total_seconds` | `None` | *(Python API)* | Optional overall deadline across wait + request attempts |
+| `InputBudgetPolicy.max_input_chars` | `120_000` | `--max-input-chars` | Maximum prepared document characters (`None` / `"none"` disables) |
+| `InputBudgetPolicy.overflow_policy` | `reject` | `--overflow-policy` | `reject` fails pre-network (`input_budget_exceeded`); `truncate` marks `partial` (`input_truncated`) |
+
+### Python Configuration Example
+
+```python
+import os
+from structa_maestro import (
+    InputBudgetOverflowPolicy,
+    InputBudgetPolicy,
+    OpenAICompatibleLLMStrategy,
+    RetryPolicy,
+    StructuredOutputMode,
+)
+
+strategy = OpenAICompatibleLLMStrategy(
+    model="gpt-4o-mini",
+    api_key=os.environ["STRUCTA_MAESTRO_API_KEY"],
+    structured_output_mode=StructuredOutputMode.STRICT_WITH_FALLBACK,
+    retry_policy=RetryPolicy(
+        max_retries=2,
+        initial_backoff_seconds=0.5,
+        max_backoff_seconds=8.0,
+        jitter=True,
+        retry_on_malformed_output=True,
+        max_total_seconds=30.0,
+    ),
+    input_budget=InputBudgetPolicy(
+        max_input_chars=120_000,
+        overflow_policy=InputBudgetOverflowPolicy.REJECT,
+    ),
+)
+```
+
 ## Logging & Data Minimization
 
 `structa_maestro` attaches a `NullHandler` by default and never logs raw document contents or API keys. Operational error messages scrub credential patterns and omit local host directory paths from `SourceMetadata.filename`.

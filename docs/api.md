@@ -48,8 +48,19 @@ All stable public symbols are exported from the top-level `structa_maestro` pack
 ## Exceptions
 
 - `SchemaDefinitionError`: invalid, empty, duplicate-key, conflicting, or overly deep schema.
-- `ConfigurationError`: invalid `DocumentLimits`, invalid strategy URL/timeout/temperature, or missing secret.
+- `ConfigurationError`: invalid `DocumentLimits`, `RetryPolicy`, `InputBudgetPolicy`, `StructuredOutputMode`, strategy URL/timeout/temperature, or missing secret.
 - `ContractDeserializationError`: malformed JSON, missing canonical keys, or unsupported `contract_version`.
+
+## Extraction Strategy Diagnostic Codes (`PipelineStage.EXTRACTION`)
+
+| Code | Severity | Meaning |
+| --- | --- | --- |
+| `structured_output_fallback` | `warning` | Strategy fell back from strict `json_schema` to `json_object` (open schema or unsupported endpoint). |
+| `strict_schema_incompatible` | `error` | `StructuredOutputMode.STRICT` was requested for a schema with `allow_additional_fields=True`. |
+| `model_output_sanitized` | `warning` | Valid top-level JSON envelope was recovered after stripping outer Markdown fences or surrounding text. |
+| `provider_retry_succeeded` | `warning` | Extraction succeeded after one or more bounded retries following transient failures. |
+| `input_budget_exceeded` | `error` | Prepared document length exceeded `max_input_chars` under `overflow_policy="reject"` (zero outbound requests). |
+| `input_truncated` | `warning` | Prepared document was truncated on a clean boundary under `overflow_policy="truncate"` (`status="partial"`). |
 
 ## Thin CLI (`structa-maestro`)
 
