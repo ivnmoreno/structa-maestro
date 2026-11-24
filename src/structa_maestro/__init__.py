@@ -76,6 +76,10 @@ from structa_maestro.strategies.base import (
     ProposedRecord,
     StrategyOutput,
 )
+from structa_maestro.strategies.llm_anthropic import (
+    AnthropicLLMStrategy,
+    AsyncAnthropicLLMStrategy,
+)
 from structa_maestro.strategies.llm_config import (
     InputBudgetOverflowPolicy,
     InputBudgetPolicy,
@@ -114,8 +118,10 @@ __version__ = "0.1.0"
 
 __all__ = [
     "CONTRACT_VERSION",
+    "AnthropicLLMStrategy",
     "ArithmeticRule",
     "ArithmeticTerm",
+    "AsyncAnthropicLLMStrategy",
     "AsyncDeterministicTestStrategy",
     "AsyncExtractionObserver",
     "AsyncExtractionStrategy",

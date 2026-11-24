@@ -80,6 +80,23 @@ All stable public symbols are exported from the top-level `structa_maestro` pack
       input_budget=InputBudgetPolicy(),
   )
   ```
+- `AnthropicLLMStrategy` (sync, `httpx.Client`) and `AsyncAnthropicLLMStrategy` (async, `httpx.AsyncClient` + `asyncio.sleep`, reference-counted `async with`, idempotent `await strategy.aclose()`, caller-owned `http_client` preservation): native Anthropic Messages API (`POST /v1/messages`) strategies using forced `tool_use` (`emit_extraction_result`) with single-step JSON-text fallback, `529` overloaded retries, `Retry-After`, `InputBudgetPolicy`, delimiter neutralization, and cumulative `StrategyTelemetry` (`input_tokens` → `prompt_tokens`, `output_tokens` → `completion_tokens`, `total_tokens=None` when omitted):
+  ```python
+  AsyncAnthropicLLMStrategy(
+      model="claude-sonnet-4-5",
+      api_key=...,
+      base_url="https://api.anthropic.com",
+      timeout_seconds=60.0,
+      max_tokens=4096,
+      temperature=0.0,
+      anthropic_version="2023-06-01",
+      http_client=None,  # optional caller-owned httpx.AsyncClient (never closed by strategy)
+      structured_output_mode=StructuredOutputMode.STRICT_WITH_FALLBACK,
+      retry_policy=RetryPolicy(),
+      input_budget=InputBudgetPolicy(),
+  )
+  ```
+  See [examples/anthropic_strategy_example.py](../examples/anthropic_strategy_example.py).
 - `StructuredOutputMode`: `STRICT_WITH_FALLBACK` (default), `STRICT`, `JSON_OBJECT`.
 - `RetryPolicy(max_retries=2, initial_backoff_seconds=0.5, max_backoff_seconds=8.0, jitter=True, retry_on_malformed_output=True, max_total_seconds=None)`.
 - `InputBudgetPolicy(max_input_chars=120_000, overflow_policy=InputBudgetOverflowPolicy.REJECT)` (`max_input_chars=None` disables budgeting; `InputBudgetOverflowPolicy` is `REJECT` or `TRUNCATE`).
@@ -149,9 +166,11 @@ structa-maestro extract <document|-> --schema <schema.json>
   [--filename <name>]        # stdin ('-') only; sanitized to basename
   [--output <result.json>]
   [--document-id <id>]
+  [--provider openai|anthropic]
   [--model <model>]
   [--base-url <url>]
-  [--api-key-env STRUCTA_MAESTRO_API_KEY]
+  [--api-key-env <ENV_VAR>]  # default: STRUCTA_MAESTRO_API_KEY (openai) / ANTHROPIC_API_KEY (anthropic)
+  [--max-tokens 4096]        # max output tokens for Anthropic Messages API
   [--max-file-mb 25]
   [--max-bytes <int>]        # optional byte-exact override for --max-file-mb
   [--max-decompressed-mb 50]

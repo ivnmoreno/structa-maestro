@@ -24,8 +24,9 @@ Document Path / DocumentInput (bytes, text, stream) + ExtractionSchema (dict, JS
         ▼
 3. Extraction Strategy (`structa_maestro.strategies`)
    - Narrow `ExtractionStrategy` (sync) & `AsyncExtractionStrategy` (asyncio) protocols returning `StrategyOutput`
-   - Built-in: `OpenAICompatibleLLMStrategy` & `AsyncOpenAICompatibleLLMStrategy` sharing a common base
-     (httpx `Client` / `AsyncClient`, strict `json_schema` compilation + single-step `json_object` fallback,
+   - Built-in: `OpenAICompatibleLLMStrategy` & `AsyncOpenAICompatibleLLMStrategy` plus native
+     `AnthropicLLMStrategy` & `AsyncAnthropicLLMStrategy` (direct httpx `Client` / `AsyncClient`,
+     strict `json_schema` / forced `tool_use` compilation + single-step JSON fallback,
      bounded retries/`Retry-After`/deadlines, `InputBudgetPolicy`, nonce + delimiter-neutralized framing)
    - Built-in: `DeterministicTestStrategy` & `AsyncDeterministicTestStrategy` (offline testing & evaluation)
         │

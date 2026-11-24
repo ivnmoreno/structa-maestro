@@ -217,7 +217,7 @@ print(telemetry.summary().to_json(indent=2))
 - Observer errors are strictly fault-isolated (never failing extractions or triggering `fail_fast`), while `asyncio.CancelledError` always propagates cleanly.
 - See [examples/observability_telemetry_example.py](examples/observability_telemetry_example.py), [Public API & CLI Reference](docs/api.md), and [Configuration & Security](docs/configuration.md) for OpenTelemetry and Prometheus adapter patterns.
 
-By default, `OpenAICompatibleLLMStrategy` enables strict schema-guided structured outputs with automatic `json_object` compatibility fallback, bounded exponential-backoff retries (`max_retries=2`, honoring `Retry-After`), a `120,000`-character input budget (`overflow_policy="reject"`), and embedded delimiter neutralization against prompt injection. See [Configuration & Security](docs/configuration.md) and [examples/hardened_llm_strategy_example.py](examples/hardened_llm_strategy_example.py) to customize these policies.
+By default, `OpenAICompatibleLLMStrategy` / `AsyncOpenAICompatibleLLMStrategy` (OpenAI-compatible Chat Completions) and `AnthropicLLMStrategy` / `AsyncAnthropicLLMStrategy` (native Anthropic `/v1/messages` with forced `tool_use` structured output) enable strict schema-guided structured outputs with automatic compatibility fallback, bounded exponential-backoff retries (`max_retries=2`, honoring `Retry-After` and Anthropic `529` overloaded responses), a `120,000`-character input budget (`overflow_policy="reject"`), and embedded delimiter neutralization against prompt injection. See [Configuration & Security](docs/configuration.md), [examples/hardened_llm_strategy_example.py](examples/hardened_llm_strategy_example.py), and [examples/anthropic_strategy_example.py](examples/anthropic_strategy_example.py) to customize these policies.
 
 For offline deterministic tests or custom extraction logic without external API keys, see `DeterministicTestStrategy` and [examples/](examples/).
 
@@ -228,8 +228,9 @@ For offline deterministic tests or custom extraction logic without external API 
 ```bash
 export STRUCTA_MAESTRO_API_KEY="your-api-key"
 
-# Single document -> Canonical Output Record Contract v1.0 JSON
+# Single document -> Canonical Output Record Contract v1.0 JSON (OpenAI default, or --provider anthropic)
 structa-maestro extract invoice.pdf --schema invoice_schema.json --pretty
+ANTHROPIC_API_KEY="your-key" structa-maestro extract invoice.pdf --schema invoice_schema.json --provider anthropic --pretty
 
 # Pipe binary or text document via stdin ('-') without temporary files
 cat invoice.pdf | structa-maestro extract - --schema invoice_schema.json --filename invoice.pdf
@@ -267,7 +268,7 @@ Every extraction returns an immutable `ExtractionResult` supporting lossless rou
 - **Uncalibrated confidence**: Confidence scores currently report `"calibrated": false` and MUST NOT be interpreted as statistical probabilities.
 - **Intra-record validation scope**: Declarative cross-field and conditional validation rules operate within each extracted record (including nested objects and line-item arrays); cross-document validation remains out of scope. See [Public API & CLI Reference](docs/api.md) and [examples/cross_field_validation_example.py](examples/cross_field_validation_example.py).
 - **Text-only extraction**: Scanned PDFs and embedded images are not OCR-processed.
-- **External model data transmission**: `OpenAICompatibleLLMStrategy` transmits prepared document text to the configured endpoint; review provider data-handling policies before processing confidential documents.
+- **External model data transmission**: `OpenAICompatibleLLMStrategy`, `AsyncOpenAICompatibleLLMStrategy`, `AnthropicLLMStrategy`, and `AsyncAnthropicLLMStrategy` transmit prepared document text to the configured endpoint; review provider data-handling policies before processing confidential documents.
 
 ---
 

@@ -120,6 +120,32 @@ def parse_openai_token_usage(body: Any) -> TokenUsage | None:
     )
 
 
+def parse_anthropic_token_usage(body: Any) -> TokenUsage | None:
+    """Parse an Anthropic Messages API `usage` payload without fabricating missing counts."""
+    if not isinstance(body, Mapping):
+        return None
+    raw_usage = body.get("usage")
+    if not isinstance(raw_usage, Mapping):
+        return None
+
+    def _safe_count(key: str) -> int | None:
+        val = raw_usage.get(key)
+        if isinstance(val, bool) or not isinstance(val, int) or val < 0:
+            return None
+        return val
+
+    prompt = _safe_count("input_tokens")
+    completion = _safe_count("output_tokens")
+    total = _safe_count("total_tokens")
+    if prompt is None and completion is None and total is None:
+        return None
+    return TokenUsage(
+        prompt_tokens=prompt,
+        completion_tokens=completion,
+        total_tokens=total,
+    )
+
+
 def merge_token_usage(a: TokenUsage | None, b: TokenUsage | None) -> TokenUsage | None:
     """Cumulatively sum observed non-null token counts across strategy attempts."""
     if a is None:

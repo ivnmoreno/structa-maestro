@@ -784,3 +784,58 @@ def test_cli_extract_and_batch_support_html_markdown_and_eml(
         == 0
     )
     assert json.loads(stdout_in.getvalue())["source"]["media_type"] == "text/html"
+
+
+def test_cli_provider_anthropic_selection_and_defaults(
+    fixtures_dir: Path,
+    monkeypatch: Any,
+) -> None:
+    from structa_maestro import AnthropicLLMStrategy
+
+    schema_path = fixtures_dir / "schemas" / "invoice_schema.json"
+    doc_path = fixtures_dir / "documents" / "txt" / "invoice_001.txt"
+
+    # Missing ANTHROPIC_API_KEY fails with clear configuration error (exit 1)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    err_missing = io.StringIO()
+    assert (
+        run_cli(
+            ["extract", str(doc_path), "--schema", str(schema_path), "--provider", "anthropic"],
+            stdout=io.StringIO(),
+            stderr=err_missing,
+        )
+        == 1
+    )
+    assert "ANTHROPIC_API_KEY" in err_missing.getvalue()
+
+    # With ANTHROPIC_API_KEY set, constructs AnthropicLLMStrategy with expected defaults & flags
+    captured: dict[str, Any] = {}
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-cli-test-123456")
+
+    def _capture_extract(_doc: Any, _schema: Any, **kwargs: Any) -> Any:
+        captured["strategy"] = kwargs["strategy"]
+        raise RuntimeError("stop-after-capture")
+
+    monkeypatch.setattr("structa_maestro.cli.extract", _capture_extract)
+    run_cli(
+        [
+            "extract",
+            str(doc_path),
+            "--schema",
+            str(schema_path),
+            "--provider",
+            "anthropic",
+            "--max-tokens",
+            "2048",
+            "--max-retries",
+            "3",
+        ],
+        stdout=io.StringIO(),
+        stderr=io.StringIO(),
+    )
+    strat = captured["strategy"]
+    assert isinstance(strat, AnthropicLLMStrategy)
+    assert strat.name == "anthropic-llm:claude-sonnet-4-5"
+    assert strat.messages_endpoint == "https://api.anthropic.com/v1/messages"
+    assert strat.max_tokens == 2048
+    assert strat.retry_policy.max_retries == 3
