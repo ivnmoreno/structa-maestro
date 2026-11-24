@@ -4,11 +4,18 @@ All stable public symbols are exported from the top-level `structa_maestro` pack
 
 ## Library Entry Points
 
-- `ExtractionEngine(strategy, *, limits=None)`
+- `ExtractionEngine(strategy: ExtractionStrategy | AsyncExtractionStrategy, *, limits=None)`
   - `.extract(document: str | Path | DocumentInput, schema: ExtractionSchema | Mapping[str, Any], *, document_id: str | None = None) -> ExtractionResult`
   - `.extract_batch(documents: Sequence[str | Path | BatchDocumentInput | DocumentInput], schema: ExtractionSchema | Mapping[str, Any], *, options: BatchOptions | None = None) -> BatchExtractionResult`
-- `extract(document, schema, *, strategy, limits=None, document_id=None) -> ExtractionResult`
-- `extract_batch(documents, schema, *, strategy, limits=None, options=None) -> BatchExtractionResult`
+  - `async .aextract(document: str | Path | DocumentInput, schema: ExtractionSchema | Mapping[str, Any], *, document_id: str | None = None) -> ExtractionResult`
+  - `async .aextract_batch(documents: Sequence[str | Path | BatchDocumentInput | DocumentInput], schema: ExtractionSchema | Mapping[str, Any], *, options: BatchOptions | None = None) -> BatchExtractionResult`
+  - Calling synchronous `.extract(...)` / `.extract_batch(...)` with an async-only strategy raises `ConfigurationError` eagerly. `.aextract(...)` / `.aextract_batch(...)` accept both native `AsyncExtractionStrategy` and synchronous `ExtractionStrategy` (offloaded via `asyncio.to_thread`), prefer native `aextract_raw` on dual-protocol strategies, and propagate `asyncio.CancelledError` cleanly (cancelling in-flight batch tasks).
+- Functional helpers:
+  - `extract(document, schema, *, strategy, limits=None, document_id=None) -> ExtractionResult`
+  - `extract_batch(documents, schema, *, strategy, limits=None, options=None) -> BatchExtractionResult`
+  - `async aextract(document, schema, *, strategy, limits=None, document_id=None) -> ExtractionResult`
+  - `async aextract_batch(documents, schema, *, strategy, limits=None, options=None) -> BatchExtractionResult`
+- See [examples/async_extraction_example.py](../examples/async_extraction_example.py) for an offline runnable async single + bounded-concurrency batch example.
 - In-memory input descriptors: `DocumentInput` (`DocumentInputKind`: `path`, `bytes`, `text`, `stream`) constructed via `DocumentInput.from_path(path, *, filename=None, document_id=None, media_type=None)`, `DocumentInput.from_bytes(content, *, filename=None, document_id=None, media_type=None)`, `DocumentInput.from_text(text, *, filename=None, document_id=None, media_type=None)`, and `DocumentInput.from_stream(stream, *, filename=None, document_id=None, media_type=None)`. Filenames are sanitized to basename-only (null bytes fail eagerly); binary streams are read incrementally up to `max_file_bytes + 1` bytes without creating temporary files. See [examples/in_memory_extraction_example.py](../examples/in_memory_extraction_example.py).
 - Batch models: `BatchDocumentInput(path, document_id=None)`, `BatchOptions(max_workers=1, fail_fast=False)` (`1 <= max_workers <= 32`), `BatchSummary` (`to_dict()`, `to_json()`), `BatchExtractionResult` (`to_jsonl()`, `to_dict()`, `to_json()`). See [examples/batch_extraction_example.py](../examples/batch_extraction_example.py).
 
@@ -58,15 +65,16 @@ All stable public symbols are exported from the top-level `structa_maestro` pack
 ## Strategies & Reliability Policies
 
 - `ExtractionStrategy` (Protocol): implement `name` property and `extract_raw(document: PreparedDocument, schema: ExtractionSchema) -> StrategyOutput`.
-- `OpenAICompatibleLLMStrategy`:
+- `AsyncExtractionStrategy` (Protocol): implement `name` property and `async def aextract_raw(document: PreparedDocument, schema: ExtractionSchema) -> StrategyOutput`.
+- `OpenAICompatibleLLMStrategy` (sync, `httpx.Client`) and `AsyncOpenAICompatibleLLMStrategy` (async, `httpx.AsyncClient` + `asyncio.sleep`, supporting reference-counted `async with strategy:`, idempotent `await strategy.aclose()`, caller-owned injected `http_client: httpx.AsyncClient`, and safe per-call scoped fallback client):
   ```python
-  OpenAICompatibleLLMStrategy(
+  AsyncOpenAICompatibleLLMStrategy(
       model=...,
       api_key=...,
       base_url="https://api.openai.com/v1",
       timeout_seconds=60.0,
       temperature=0.0,
-      http_client=None,
+      http_client=None,  # optional caller-owned httpx.AsyncClient (never closed by strategy)
       structured_output_mode=StructuredOutputMode.STRICT_WITH_FALLBACK,
       retry_policy=RetryPolicy(),
       input_budget=InputBudgetPolicy(),
@@ -76,7 +84,7 @@ All stable public symbols are exported from the top-level `structa_maestro` pack
 - `RetryPolicy(max_retries=2, initial_backoff_seconds=0.5, max_backoff_seconds=8.0, jitter=True, retry_on_malformed_output=True, max_total_seconds=None)`.
 - `InputBudgetPolicy(max_input_chars=120_000, overflow_policy=InputBudgetOverflowPolicy.REJECT)` (`max_input_chars=None` disables budgeting; `InputBudgetOverflowPolicy` is `REJECT` or `TRUNCATE`).
 - `CompiledOutputSchema` & `compile_extraction_output_schema(schema)`: deterministic closed JSON Schema compiler used by strict structured-output mode.
-- `DeterministicTestStrategy(handler_or_output, name="deterministic-test")`.
+- `DeterministicTestStrategy(handler_or_output, name="deterministic-test")` and `AsyncDeterministicTestStrategy(async_handler_or_output, name="async-deterministic-test")`.
 
 ## Canonical Output & Serialization
 

@@ -1,4 +1,4 @@
-"""Provider-independent ExtractionStrategy protocol and internal strategy DTOs."""
+"""Provider-independent ExtractionStrategy protocols and internal strategy DTOs."""
 
 from __future__ import annotations
 
@@ -65,7 +65,7 @@ class StrategyOutput:
 
 @runtime_checkable
 class ExtractionStrategy(Protocol):
-    """Replaceable extraction strategy interface decoupled from Canonical Output Contract."""
+    """Replaceable synchronous extraction strategy decoupled from Canonical Output Contract."""
 
     @property
     def name(self) -> str:
@@ -78,4 +78,22 @@ class ExtractionStrategy(Protocol):
         schema: ExtractionSchema,
     ) -> StrategyOutput:
         """Extract raw candidate records from a prepared document according to schema."""
+        ...
+
+
+@runtime_checkable
+class AsyncExtractionStrategy(Protocol):
+    """Replaceable native asyncio extraction strategy decoupled from Canonical Output Contract."""
+
+    @property
+    def name(self) -> str:
+        """Stable human-readable name identifying this strategy."""
+        ...
+
+    async def aextract_raw(
+        self,
+        document: PreparedDocument,
+        schema: ExtractionSchema,
+    ) -> StrategyOutput:
+        """Asynchronously extract raw candidate records from a prepared document."""
         ...

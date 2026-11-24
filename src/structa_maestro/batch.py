@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Coroutine, Sequence
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from pathlib import Path
@@ -326,6 +327,83 @@ def run_batch_extraction(
                     fut = pool.submit(extract_one, inputs[next_idx])
                     in_flight[fut] = next_idx
                     next_idx += 1
+
+        aborted_early = stop_submitting and len(completed_by_idx) < total
+        final_results = tuple(completed_by_idx[i] for i in sorted(completed_by_idx))
+
+    elapsed_ms = (time.perf_counter() - started) * 1000.0
+    summary = _compute_summary(
+        total_documents=total,
+        results=final_results,
+        aborted_early=aborted_early,
+        elapsed_ms=elapsed_ms,
+    )
+    return BatchExtractionResult(
+        batch_id=str(uuid4()),
+        schema_metadata=schema_metadata,
+        results=final_results,
+        summary=summary,
+    )
+
+
+async def run_async_batch_extraction(
+    *,
+    inputs: tuple[_PreparedBatchItem, ...],
+    schema_metadata: SchemaMetadata,
+    options: BatchOptions,
+    extract_one: Callable[[_PreparedBatchItem], Coroutine[Any, Any, ExtractionResult]],
+) -> BatchExtractionResult:
+    """Execute stateless sequential or bounded concurrent asyncio batch extraction in order."""
+    started = time.perf_counter()
+    total = len(inputs)
+    aborted_early = False
+
+    if options.max_workers == 1:
+        ordered_results: list[ExtractionResult] = []
+        for idx, item in enumerate(inputs):
+            res = await extract_one(item)
+            ordered_results.append(res)
+            if options.fail_fast and res.status == ProcessingStatus.FAILED and idx < total - 1:
+                aborted_early = True
+                break
+        final_results = tuple(ordered_results)
+    else:
+        completed_by_idx: dict[int, ExtractionResult] = {}
+        worker_count = min(options.max_workers, total)
+        next_idx = 0
+        stop_submitting = False
+        in_flight: dict[asyncio.Task[ExtractionResult], int] = {}
+
+        try:
+            while next_idx < total and len(in_flight) < worker_count:
+                task = asyncio.create_task(extract_one(inputs[next_idx]))
+                in_flight[task] = next_idx
+                next_idx += 1
+
+            while in_flight:
+                done, _ = await asyncio.wait(
+                    in_flight.keys(),
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                for task in done:
+                    idx = in_flight.pop(task)
+                    res = task.result()
+                    completed_by_idx[idx] = res
+                    if options.fail_fast and res.status == ProcessingStatus.FAILED:
+                        stop_submitting = True
+
+                while not stop_submitting and next_idx < total and len(in_flight) < worker_count:
+                    task = asyncio.create_task(extract_one(inputs[next_idx]))
+                    in_flight[task] = next_idx
+                    next_idx += 1
+        except BaseException:
+            # Cancel and cleanly await all active child tasks before propagating CancelledError
+            pending_tasks = list(in_flight.keys())
+            for task in pending_tasks:
+                task.cancel()
+            if pending_tasks:
+                await asyncio.gather(*pending_tasks, return_exceptions=True)
+            raise
 
         aborted_early = stop_submitting and len(completed_by_idx) < total
         final_results = tuple(completed_by_idx[i] for i in sorted(completed_by_idx))

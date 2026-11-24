@@ -1,11 +1,13 @@
-"""Provider-independent OpenAI-compatible LLM extraction strategy built on httpx."""
+"""Provider-independent sync & async OpenAI-compatible LLM extraction strategies on httpx."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 import secrets
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
 
@@ -109,15 +111,28 @@ def _describe_field_spec(spec: FieldSpec) -> dict[str, Any]:
     return desc
 
 
-class OpenAICompatibleLLMStrategy:
-    """AI-model extraction strategy using OpenAI-compatible Chat Completions over httpx.
+@dataclass(slots=True)
+class _PreparedLLMCall:
+    endpoint: str
+    headers: dict[str, str]
+    messages: list[dict[str, str]]
+    response_format: dict[str, Any]
+    fallback_used: bool
+    input_truncated: bool
+    warnings: list[DiagnosticIssue]
+    deadline: float | None
+    secret_raw: str
 
-    Supports strict schema-guided structured outputs with single-step compatibility fallback,
-    bounded retries with exponential backoff/jitter/Retry-After/deadline budgets, configurable
-    input text budgeting, and embedded untrusted-document delimiter neutralization.
 
-    Note: Prepared document text is transmitted to the configured endpoint when invoked.
-    """
+@dataclass(frozen=True, slots=True)
+class _ResponseDecision:
+    action: str  # "return" | "fallback" | "retry"
+    output: StrategyOutput | None = None
+    retry_after: float | None = None
+
+
+class _BaseOpenAICompatibleLLMStrategy:
+    """Shared config validation, prompt building, schema compilation, and response parsing."""
 
     def __init__(
         self,
@@ -127,23 +142,20 @@ class OpenAICompatibleLLMStrategy:
         base_url: str = "https://api.openai.com/v1",
         timeout_seconds: float = 60.0,
         temperature: float = 0.0,
-        http_client: httpx.Client | None = None,
         structured_output_mode: StructuredOutputMode | str = (
             StructuredOutputMode.STRICT_WITH_FALLBACK
         ),
         retry_policy: RetryPolicy | None = None,
         input_budget: InputBudgetPolicy | None = None,
-        sleep_fn: Callable[[float], None] | None = None,
         clock_fn: Callable[[], float] | None = None,
         rng_fn: Callable[[], float] | None = None,
     ) -> None:
+        cls_name = type(self).__name__
         if not isinstance(model, str) or not model.strip():
-            raise ConfigurationError("OpenAICompatibleLLMStrategy requires a non-empty model name.")
+            raise ConfigurationError(f"{cls_name} requires a non-empty model name.")
         parsed_url = urlparse(base_url)
         if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
-            raise ConfigurationError(
-                "OpenAICompatibleLLMStrategy base_url must be a valid http(s) URL."
-            )
+            raise ConfigurationError(f"{cls_name} base_url must be a valid http(s) URL.")
         if isinstance(timeout_seconds, bool) or timeout_seconds <= 0:
             raise ConfigurationError("timeout_seconds must be > 0.")
         if isinstance(temperature, bool) or not (0.0 <= temperature <= 2.0):
@@ -160,11 +172,9 @@ class OpenAICompatibleLLMStrategy:
         self._base_url = base_url.rstrip("/")
         self._timeout_seconds = float(timeout_seconds)
         self._temperature = float(temperature)
-        self._http_client = http_client
         self._structured_output_mode = resolved_mode
         self._retry_policy = retry_policy if retry_policy is not None else RetryPolicy()
         self._input_budget = input_budget if input_budget is not None else InputBudgetPolicy()
-        self._sleep_fn = sleep_fn if sleep_fn is not None else time.sleep
         self._clock_fn = clock_fn if clock_fn is not None else time.monotonic
         self._rng_fn = rng_fn if rng_fn is not None else default_rng
 
@@ -186,7 +196,7 @@ class OpenAICompatibleLLMStrategy:
 
     def __repr__(self) -> str:
         return (
-            f"OpenAICompatibleLLMStrategy(model={self._model!r}, "
+            f"{type(self).__name__}(model={self._model!r}, "
             f"base_url={self._base_url!r}, api_key={self._api_key!r}, "
             f"structured_output_mode={self._structured_output_mode.value!r})"
         )
@@ -228,12 +238,11 @@ class OpenAICompatibleLLMStrategy:
             {"role": "user", "content": user_content},
         ]
 
-    def extract_raw(
+    def _prepare_call(
         self,
         document: PreparedDocument,
         schema: ExtractionSchema,
-    ) -> StrategyOutput:
-        """Send prepared document to configured endpoint with budget, fallback, and retry bounds."""
+    ) -> tuple[_PreparedLLMCall | None, StrategyOutput | None]:
         secret_raw = self._api_key.get_secret_value()
         strategy_warnings: list[DiagnosticIssue] = []
 
@@ -245,7 +254,7 @@ class OpenAICompatibleLLMStrategy:
         input_truncated = False
         if exceeded:
             if self._input_budget.overflow_policy == InputBudgetOverflowPolicy.REJECT:
-                return self._failed_output(
+                return None, self._failed_output(
                     "input_budget_exceeded",
                     f"Prepared document length ({total_chars} chars) exceeds configured "
                     f"max_input_chars ({self._input_budget.max_input_chars}).",
@@ -274,7 +283,7 @@ class OpenAICompatibleLLMStrategy:
                 response_format = compiled.to_response_format()
             except StrictSchemaIncompatibilityError:
                 if self._structured_output_mode == StructuredOutputMode.STRICT:
-                    return self._failed_output(
+                    return None, self._failed_output(
                         "strict_schema_incompatible",
                         "ExtractionSchema allows additional fields and cannot be compiled "
                         "in strict structured-output mode.",
@@ -294,7 +303,6 @@ class OpenAICompatibleLLMStrategy:
                     )
                 )
 
-        # 3. Bounded attempt loop
         endpoint = f"{self._base_url}/chat/completions"
         headers = {
             "Authorization": f"Bearer {secret_raw}",
@@ -310,236 +318,175 @@ class OpenAICompatibleLLMStrategy:
             if self._retry_policy.max_total_seconds is not None
             else None
         )
-        transient_retries = 0
-        max_transient_retries = self._retry_policy.max_retries
-
-        while True:
-            remaining = (deadline - self._clock_fn()) if deadline is not None else None
-            if remaining is not None and remaining <= 0.0:
-                return self._failed_output(
-                    "provider_timeout",
-                    "Extraction exceeded configured max_total_seconds deadline.",
-                    warnings=strategy_warnings,
-                )
-
-            req_timeout = (
-                min(self._timeout_seconds, remaining)
-                if remaining is not None
-                else self._timeout_seconds
-            )
-            payload: dict[str, Any] = {
-                "model": self._model,
-                "temperature": self._temperature,
-                "response_format": response_format,
-                "messages": messages,
-            }
-
-            try:
-                response = self._post_request(
-                    endpoint=endpoint,
-                    payload=payload,
-                    headers=headers,
-                    timeout=req_timeout,
-                )
-            except httpx.TimeoutException:
-                if self._can_retry(
-                    transient_retries=transient_retries,
-                    max_retries=max_transient_retries,
-                    deadline=deadline,
-                    retry_after=None,
-                ):
-                    transient_retries += 1
-                    continue
-                return self._failed_output(
-                    "provider_timeout",
-                    "Model provider request timed out.",
-                    warnings=strategy_warnings,
-                )
-            except httpx.HTTPError as exc:
-                if self._can_retry(
-                    transient_retries=transient_retries,
-                    max_retries=max_transient_retries,
-                    deadline=deadline,
-                    retry_after=None,
-                ):
-                    transient_retries += 1
-                    continue
-                safe = sanitize_message(
-                    f"Model provider connection error: {type(exc).__name__}",
-                    secrets=(secret_raw,),
-                )
-                return self._failed_output(
-                    "provider_connection_error",
-                    safe,
-                    warnings=strategy_warnings,
-                )
-
-            status_code = response.status_code
-
-            # Single-step automatic compatibility fallback when endpoint rejects json_schema
-            if (
-                status_code in (400, 422)
-                and self._structured_output_mode == StructuredOutputMode.STRICT_WITH_FALLBACK
-                and not fallback_used
-                and response_format.get("type") == "json_schema"
-                and is_structured_output_unsupported(status_code, response.text)
-            ):
-                fallback_used = True
-                response_format = {"type": "json_object"}
-                strategy_warnings.append(
-                    DiagnosticIssue(
-                        code="structured_output_fallback",
-                        severity=IssueSeverity.WARNING,
-                        stage=PipelineStage.EXTRACTION,
-                        message=(
-                            "Endpoint rejected strict json_schema response_format; fell back "
-                            "to json_object mode."
-                        ),
-                    )
-                )
-                continue
-
-            # Permanent client / auth errors -> fail immediately (0 retries)
-            if status_code in (401, 403):
-                return self._failed_output(
-                    "provider_auth_error",
-                    f"Model provider rejected authentication (HTTP {status_code}).",
-                    warnings=strategy_warnings,
-                )
-
-            # Retryable HTTP statuses (408, 429, 5xx)
-            if status_code == 408 or status_code == 429 or status_code >= 500:
-                retry_after = parse_retry_after(response.headers.get("Retry-After"))
-                if self._can_retry(
-                    transient_retries=transient_retries,
-                    max_retries=max_transient_retries,
-                    deadline=deadline,
-                    retry_after=retry_after,
-                ):
-                    transient_retries += 1
-                    continue
-                if status_code == 408:
-                    return self._failed_output(
-                        "provider_timeout",
-                        "Model provider request timed out (HTTP 408).",
-                        warnings=strategy_warnings,
-                    )
-                if status_code == 429:
-                    return self._failed_output(
-                        "provider_rate_limited",
-                        "Model provider rate limit exceeded (HTTP 429).",
-                        warnings=strategy_warnings,
-                    )
-                return self._failed_output(
-                    "provider_unavailable",
-                    f"Model provider unavailable (HTTP {status_code}).",
-                    warnings=strategy_warnings,
-                )
-
-            if status_code >= 400:
-                return self._failed_output(
-                    "provider_request_error",
-                    f"Model provider rejected request (HTTP {status_code}).",
-                    warnings=strategy_warnings,
-                )
-
-            try:
-                body = response.json()
-            except ValueError:
-                if self._retry_policy.retry_on_malformed_output and self._can_retry(
-                    transient_retries=transient_retries,
-                    max_retries=max_transient_retries,
-                    deadline=deadline,
-                    retry_after=None,
-                ):
-                    transient_retries += 1
-                    continue
-                return self._failed_output(
-                    "malformed_provider_response",
-                    "Model provider returned non-JSON HTTP response body.",
-                    warnings=strategy_warnings,
-                )
-
-            parsed_output = self._parse_provider_body(body, schema)
-            if (
-                parsed_output.failed
-                and self._retry_policy.retry_on_malformed_output
-                and any(e.code in _RETRYABLE_OUTPUT_CODES for e in parsed_output.errors)
-                and self._can_retry(
-                    transient_retries=transient_retries,
-                    max_retries=max_transient_retries,
-                    deadline=deadline,
-                    retry_after=None,
-                )
-            ):
-                transient_retries += 1
-                continue
-
-            combined_warnings = list(strategy_warnings)
-            if not parsed_output.failed and transient_retries > 0:
-                combined_warnings.append(
-                    DiagnosticIssue(
-                        code="provider_retry_succeeded",
-                        severity=IssueSeverity.WARNING,
-                        stage=PipelineStage.EXTRACTION,
-                        message=(
-                            f"Model provider extraction succeeded after {transient_retries} "
-                            "retry attempt(s)."
-                        ),
-                    )
-                )
-            combined_warnings.extend(parsed_output.warnings)
-
-            return StrategyOutput(
-                records=parsed_output.records,
-                partial=parsed_output.partial or (input_truncated and not parsed_output.failed),
-                failed=parsed_output.failed,
-                errors=parsed_output.errors,
-                warnings=tuple(combined_warnings),
-                default_confidence_method=parsed_output.default_confidence_method,
-            )
-
-    def _post_request(
-        self,
-        *,
-        endpoint: str,
-        payload: dict[str, Any],
-        headers: dict[str, str],
-        timeout: float,
-    ) -> httpx.Response:
-        if self._http_client is not None:
-            return self._http_client.post(
-                endpoint,
-                json=payload,
+        return (
+            _PreparedLLMCall(
+                endpoint=endpoint,
                 headers=headers,
-                timeout=timeout,
-            )
-        with httpx.Client(timeout=timeout) as client:
-            return client.post(endpoint, json=payload, headers=headers)
+                messages=messages,
+                response_format=response_format,
+                fallback_used=fallback_used,
+                input_truncated=input_truncated,
+                warnings=strategy_warnings,
+                deadline=deadline,
+                secret_raw=secret_raw,
+            ),
+            None,
+        )
 
-    def _can_retry(
+    def _compute_next_retry_delay(
         self,
         *,
         transient_retries: int,
-        max_retries: int,
         deadline: float | None,
         retry_after: float | None,
-    ) -> bool:
-        if transient_retries >= max_retries:
-            return False
+    ) -> float | None:
+        if transient_retries >= self._retry_policy.max_retries:
+            return None
         remaining = (deadline - self._clock_fn()) if deadline is not None else None
-        delay = compute_backoff_delay(
+        return compute_backoff_delay(
             transient_retries + 1,
             self._retry_policy,
             retry_after=retry_after,
             remaining_budget=remaining,
             rng=self._rng_fn,
         )
-        if delay is None:
-            return False
-        if delay > 0.0:
-            self._sleep_fn(delay)
-        return True
+
+    def _evaluate_response(
+        self,
+        *,
+        response: httpx.Response,
+        schema: ExtractionSchema,
+        ctx: _PreparedLLMCall,
+        transient_retries: int,
+        can_retry_more: bool,
+    ) -> _ResponseDecision:
+        status_code = response.status_code
+
+        # Single-step automatic compatibility fallback when endpoint rejects json_schema
+        if (
+            status_code in (400, 422)
+            and self._structured_output_mode == StructuredOutputMode.STRICT_WITH_FALLBACK
+            and not ctx.fallback_used
+            and ctx.response_format.get("type") == "json_schema"
+            and is_structured_output_unsupported(status_code, response.text)
+        ):
+            ctx.fallback_used = True
+            ctx.response_format = {"type": "json_object"}
+            ctx.warnings.append(
+                DiagnosticIssue(
+                    code="structured_output_fallback",
+                    severity=IssueSeverity.WARNING,
+                    stage=PipelineStage.EXTRACTION,
+                    message=(
+                        "Endpoint rejected strict json_schema response_format; fell back "
+                        "to json_object mode."
+                    ),
+                )
+            )
+            return _ResponseDecision(action="fallback")
+
+        # Permanent client / auth errors -> fail immediately (0 retries)
+        if status_code in (401, 403):
+            return _ResponseDecision(
+                action="return",
+                output=self._failed_output(
+                    "provider_auth_error",
+                    f"Model provider rejected authentication (HTTP {status_code}).",
+                    warnings=ctx.warnings,
+                ),
+            )
+
+        # Retryable HTTP statuses (408, 429, 5xx)
+        if status_code == 408 or status_code == 429 or status_code >= 500:
+            retry_after = parse_retry_after(response.headers.get("Retry-After"))
+            if can_retry_more:
+                return _ResponseDecision(action="retry", retry_after=retry_after)
+            if status_code == 408:
+                return _ResponseDecision(
+                    action="return",
+                    output=self._failed_output(
+                        "provider_timeout",
+                        "Model provider request timed out (HTTP 408).",
+                        warnings=ctx.warnings,
+                    ),
+                )
+            if status_code == 429:
+                return _ResponseDecision(
+                    action="return",
+                    output=self._failed_output(
+                        "provider_rate_limited",
+                        "Model provider rate limit exceeded (HTTP 429).",
+                        warnings=ctx.warnings,
+                    ),
+                )
+            return _ResponseDecision(
+                action="return",
+                output=self._failed_output(
+                    "provider_unavailable",
+                    f"Model provider unavailable (HTTP {status_code}).",
+                    warnings=ctx.warnings,
+                ),
+            )
+
+        if status_code >= 400:
+            return _ResponseDecision(
+                action="return",
+                output=self._failed_output(
+                    "provider_request_error",
+                    f"Model provider rejected request (HTTP {status_code}).",
+                    warnings=ctx.warnings,
+                ),
+            )
+
+        try:
+            body = response.json()
+        except ValueError:
+            if self._retry_policy.retry_on_malformed_output and can_retry_more:
+                return _ResponseDecision(action="retry", retry_after=None)
+            return _ResponseDecision(
+                action="return",
+                output=self._failed_output(
+                    "malformed_provider_response",
+                    "Model provider returned non-JSON HTTP response body.",
+                    warnings=ctx.warnings,
+                ),
+            )
+
+        parsed_output = self._parse_provider_body(body, schema)
+        if (
+            parsed_output.failed
+            and self._retry_policy.retry_on_malformed_output
+            and any(e.code in _RETRYABLE_OUTPUT_CODES for e in parsed_output.errors)
+            and can_retry_more
+        ):
+            return _ResponseDecision(action="retry", retry_after=None)
+
+        combined_warnings = list(ctx.warnings)
+        if not parsed_output.failed and transient_retries > 0:
+            combined_warnings.append(
+                DiagnosticIssue(
+                    code="provider_retry_succeeded",
+                    severity=IssueSeverity.WARNING,
+                    stage=PipelineStage.EXTRACTION,
+                    message=(
+                        f"Model provider extraction succeeded after {transient_retries} "
+                        "retry attempt(s)."
+                    ),
+                )
+            )
+        combined_warnings.extend(parsed_output.warnings)
+
+        return _ResponseDecision(
+            action="return",
+            output=StrategyOutput(
+                records=parsed_output.records,
+                partial=parsed_output.partial or (ctx.input_truncated and not parsed_output.failed),
+                failed=parsed_output.failed,
+                errors=parsed_output.errors,
+                warnings=tuple(combined_warnings),
+                default_confidence_method=parsed_output.default_confidence_method,
+            ),
+        )
 
     def _parse_provider_body(self, body: Any, schema: ExtractionSchema) -> StrategyOutput:
         if not isinstance(body, dict):
@@ -699,7 +646,8 @@ class OpenAICompatibleLLMStrategy:
             )
 
         _logger.debug(
-            "OpenAICompatibleLLMStrategy parsed %d record(s) with partial=%s",
+            "%s parsed %d record(s) with partial=%s",
+            type(self).__name__,
             len(records),
             partial,
         )
@@ -733,3 +681,400 @@ class OpenAICompatibleLLMStrategy:
             warnings=tuple(warnings) if warnings else (),
             default_confidence_method="llm-self-assessment",
         )
+
+
+class OpenAICompatibleLLMStrategy(_BaseOpenAICompatibleLLMStrategy):
+    """Synchronous OpenAI-compatible Chat Completions extraction strategy using httpx.
+
+    Security notice: This strategy transmits prepared document text to the configured external
+    endpoint (`base_url`). Review provider data-handling policies before sending confidential
+    documents. API keys are wrapped in `SecretValue` and redacted from logs and errors.
+    """
+
+    def __init__(
+        self,
+        *,
+        model: str,
+        api_key: str | SecretValue,
+        base_url: str = "https://api.openai.com/v1",
+        timeout_seconds: float = 60.0,
+        temperature: float = 0.0,
+        http_client: httpx.Client | None = None,
+        structured_output_mode: StructuredOutputMode | str = (
+            StructuredOutputMode.STRICT_WITH_FALLBACK
+        ),
+        retry_policy: RetryPolicy | None = None,
+        input_budget: InputBudgetPolicy | None = None,
+        sleep_fn: Callable[[float], None] | None = None,
+        clock_fn: Callable[[], float] | None = None,
+        rng_fn: Callable[[], float] | None = None,
+    ) -> None:
+        super().__init__(
+            model=model,
+            api_key=api_key,
+            base_url=base_url,
+            timeout_seconds=timeout_seconds,
+            temperature=temperature,
+            structured_output_mode=structured_output_mode,
+            retry_policy=retry_policy,
+            input_budget=input_budget,
+            clock_fn=clock_fn,
+            rng_fn=rng_fn,
+        )
+        self._http_client = http_client
+        self._sleep_fn = sleep_fn if sleep_fn is not None else time.sleep
+
+    def extract_raw(
+        self,
+        document: PreparedDocument,
+        schema: ExtractionSchema,
+    ) -> StrategyOutput:
+        """Send prepared document to configured endpoint with budget, fallback, and retry bounds."""
+        ctx, early_failure = self._prepare_call(document, schema)
+        if early_failure is not None or ctx is None:
+            return early_failure or self._failed_output("extraction_error", "Call setup failed.")
+
+        transient_retries = 0
+        while True:
+            remaining = (ctx.deadline - self._clock_fn()) if ctx.deadline is not None else None
+            if remaining is not None and remaining <= 0.0:
+                return self._failed_output(
+                    "provider_timeout",
+                    "Extraction exceeded configured max_total_seconds deadline.",
+                    warnings=ctx.warnings,
+                )
+
+            req_timeout = (
+                min(self._timeout_seconds, remaining)
+                if remaining is not None
+                else self._timeout_seconds
+            )
+            payload: dict[str, Any] = {
+                "model": self._model,
+                "temperature": self._temperature,
+                "response_format": ctx.response_format,
+                "messages": ctx.messages,
+            }
+
+            try:
+                response = self._post_request(
+                    endpoint=ctx.endpoint,
+                    payload=payload,
+                    headers=ctx.headers,
+                    timeout=req_timeout,
+                )
+            except httpx.TimeoutException:
+                if self._can_retry(
+                    transient_retries=transient_retries,
+                    deadline=ctx.deadline,
+                    retry_after=None,
+                ):
+                    transient_retries += 1
+                    continue
+                return self._failed_output(
+                    "provider_timeout",
+                    "Model provider request timed out.",
+                    warnings=ctx.warnings,
+                )
+            except httpx.HTTPError as exc:
+                if self._can_retry(
+                    transient_retries=transient_retries,
+                    deadline=ctx.deadline,
+                    retry_after=None,
+                ):
+                    transient_retries += 1
+                    continue
+                safe = sanitize_message(
+                    f"Model provider connection error: {type(exc).__name__}",
+                    secrets=(ctx.secret_raw,),
+                )
+                return self._failed_output(
+                    "provider_connection_error",
+                    safe,
+                    warnings=ctx.warnings,
+                )
+
+            decision = self._evaluate_response(
+                response=response,
+                schema=schema,
+                ctx=ctx,
+                transient_retries=transient_retries,
+                can_retry_more=transient_retries < self._retry_policy.max_retries,
+            )
+            if decision.action == "fallback":
+                continue
+            if decision.action == "retry":
+                if self._can_retry(
+                    transient_retries=transient_retries,
+                    deadline=ctx.deadline,
+                    retry_after=decision.retry_after,
+                ):
+                    transient_retries += 1
+                    continue
+                # Budget/deadline prevented retry; evaluate final terminal error
+                terminal = self._evaluate_response(
+                    response=response,
+                    schema=schema,
+                    ctx=ctx,
+                    transient_retries=transient_retries,
+                    can_retry_more=False,
+                )
+                return terminal.output or self._failed_output(
+                    "provider_timeout",
+                    "Extraction exceeded configured max_total_seconds deadline.",
+                    warnings=ctx.warnings,
+                )
+            return decision.output or self._failed_output("extraction_error", "Empty response.")
+
+    def _post_request(
+        self,
+        *,
+        endpoint: str,
+        payload: dict[str, Any],
+        headers: dict[str, str],
+        timeout: float,
+    ) -> httpx.Response:
+        if self._http_client is not None:
+            return self._http_client.post(
+                endpoint,
+                json=payload,
+                headers=headers,
+                timeout=timeout,
+            )
+        with httpx.Client(timeout=timeout) as client:
+            return client.post(endpoint, json=payload, headers=headers)
+
+    def _can_retry(
+        self,
+        *,
+        transient_retries: int,
+        deadline: float | None,
+        retry_after: float | None,
+    ) -> bool:
+        delay = self._compute_next_retry_delay(
+            transient_retries=transient_retries,
+            deadline=deadline,
+            retry_after=retry_after,
+        )
+        if delay is None:
+            return False
+        if delay > 0.0:
+            self._sleep_fn(delay)
+        return True
+
+
+class AsyncOpenAICompatibleLLMStrategy(_BaseOpenAICompatibleLLMStrategy):
+    """Native asyncio OpenAI-compatible Chat Completions strategy backed by httpx.AsyncClient.
+
+    Client lifecycle:
+    - If ``http_client`` is injected by the caller, it is reused and NEVER closed by this strategy.
+    - If ``http_client`` is ``None`` and used inside ``async with strategy:``, a single pooled
+      ``httpx.AsyncClient`` is shared across nested/concurrent calls and closed on outermost exit.
+    - If ``http_client`` is ``None`` and called standalone outside ``async with``, a scoped
+      ``httpx.AsyncClient`` is created and closed per call so sockets never leak.
+    """
+
+    def __init__(
+        self,
+        *,
+        model: str,
+        api_key: str | SecretValue,
+        base_url: str = "https://api.openai.com/v1",
+        timeout_seconds: float = 60.0,
+        temperature: float = 0.0,
+        http_client: httpx.AsyncClient | None = None,
+        structured_output_mode: StructuredOutputMode | str = (
+            StructuredOutputMode.STRICT_WITH_FALLBACK
+        ),
+        retry_policy: RetryPolicy | None = None,
+        input_budget: InputBudgetPolicy | None = None,
+        async_sleep_fn: Callable[[float], Awaitable[None]] | None = None,
+        clock_fn: Callable[[], float] | None = None,
+        rng_fn: Callable[[], float] | None = None,
+    ) -> None:
+        super().__init__(
+            model=model,
+            api_key=api_key,
+            base_url=base_url,
+            timeout_seconds=timeout_seconds,
+            temperature=temperature,
+            structured_output_mode=structured_output_mode,
+            retry_policy=retry_policy,
+            input_budget=input_budget,
+            clock_fn=clock_fn,
+            rng_fn=rng_fn,
+        )
+        if http_client is not None and not isinstance(http_client, httpx.AsyncClient):
+            raise ConfigurationError(
+                "AsyncOpenAICompatibleLLMStrategy.http_client must be an httpx.AsyncClient or None."
+            )
+        self._external_client: httpx.AsyncClient | None = http_client
+        self._owned_client: httpx.AsyncClient | None = None
+        self._enter_count: int = 0
+        self._async_sleep_fn: Callable[[float], Awaitable[None]] = (
+            async_sleep_fn if async_sleep_fn is not None else asyncio.sleep
+        )
+
+    async def __aenter__(self) -> AsyncOpenAICompatibleLLMStrategy:
+        self._enter_count += 1
+        if self._external_client is None and self._owned_client is None:
+            self._owned_client = httpx.AsyncClient(timeout=self._timeout_seconds)
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: Any,
+    ) -> None:
+        self._enter_count = max(0, self._enter_count - 1)
+        if self._enter_count == 0:
+            await self.aclose()
+
+    async def aclose(self) -> None:
+        """Close the strategy-owned httpx.AsyncClient if open (idempotent; keeps external open)."""
+        self._enter_count = 0
+        client = self._owned_client
+        self._owned_client = None
+        if client is not None:
+            await client.aclose()
+
+    async def aextract_raw(
+        self,
+        document: PreparedDocument,
+        schema: ExtractionSchema,
+    ) -> StrategyOutput:
+        """Asynchronously send prepared document with budget, fallback, and non-blocking retries."""
+        ctx, early_failure = self._prepare_call(document, schema)
+        if early_failure is not None or ctx is None:
+            return early_failure or self._failed_output("extraction_error", "Call setup failed.")
+
+        transient_retries = 0
+        while True:
+            remaining = (ctx.deadline - self._clock_fn()) if ctx.deadline is not None else None
+            if remaining is not None and remaining <= 0.0:
+                return self._failed_output(
+                    "provider_timeout",
+                    "Extraction exceeded configured max_total_seconds deadline.",
+                    warnings=ctx.warnings,
+                )
+
+            req_timeout = (
+                min(self._timeout_seconds, remaining)
+                if remaining is not None
+                else self._timeout_seconds
+            )
+            payload: dict[str, Any] = {
+                "model": self._model,
+                "temperature": self._temperature,
+                "response_format": ctx.response_format,
+                "messages": ctx.messages,
+            }
+
+            try:
+                response = await self._apost_request(
+                    endpoint=ctx.endpoint,
+                    payload=payload,
+                    headers=ctx.headers,
+                    timeout=req_timeout,
+                )
+            except httpx.TimeoutException:
+                if await self._acan_retry(
+                    transient_retries=transient_retries,
+                    deadline=ctx.deadline,
+                    retry_after=None,
+                ):
+                    transient_retries += 1
+                    continue
+                return self._failed_output(
+                    "provider_timeout",
+                    "Model provider request timed out.",
+                    warnings=ctx.warnings,
+                )
+            except httpx.HTTPError as exc:
+                if await self._acan_retry(
+                    transient_retries=transient_retries,
+                    deadline=ctx.deadline,
+                    retry_after=None,
+                ):
+                    transient_retries += 1
+                    continue
+                safe = sanitize_message(
+                    f"Model provider connection error: {type(exc).__name__}",
+                    secrets=(ctx.secret_raw,),
+                )
+                return self._failed_output(
+                    "provider_connection_error",
+                    safe,
+                    warnings=ctx.warnings,
+                )
+
+            decision = self._evaluate_response(
+                response=response,
+                schema=schema,
+                ctx=ctx,
+                transient_retries=transient_retries,
+                can_retry_more=transient_retries < self._retry_policy.max_retries,
+            )
+            if decision.action == "fallback":
+                continue
+            if decision.action == "retry":
+                if await self._acan_retry(
+                    transient_retries=transient_retries,
+                    deadline=ctx.deadline,
+                    retry_after=decision.retry_after,
+                ):
+                    transient_retries += 1
+                    continue
+                terminal = self._evaluate_response(
+                    response=response,
+                    schema=schema,
+                    ctx=ctx,
+                    transient_retries=transient_retries,
+                    can_retry_more=False,
+                )
+                return terminal.output or self._failed_output(
+                    "provider_timeout",
+                    "Extraction exceeded configured max_total_seconds deadline.",
+                    warnings=ctx.warnings,
+                )
+            return decision.output or self._failed_output("extraction_error", "Empty response.")
+
+    async def _apost_request(
+        self,
+        *,
+        endpoint: str,
+        payload: dict[str, Any],
+        headers: dict[str, str],
+        timeout: float,
+    ) -> httpx.Response:
+        active_client = (
+            self._external_client if self._external_client is not None else self._owned_client
+        )
+        if active_client is not None:
+            return await active_client.post(
+                endpoint,
+                json=payload,
+                headers=headers,
+                timeout=timeout,
+            )
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            return await client.post(endpoint, json=payload, headers=headers)
+
+    async def _acan_retry(
+        self,
+        *,
+        transient_retries: int,
+        deadline: float | None,
+        retry_after: float | None,
+    ) -> bool:
+        delay = self._compute_next_retry_delay(
+            transient_retries=transient_retries,
+            deadline=deadline,
+            retry_after=retry_after,
+        )
+        if delay is None:
+            return False
+        if delay > 0.0:
+            await self._async_sleep_fn(delay)
+        return True

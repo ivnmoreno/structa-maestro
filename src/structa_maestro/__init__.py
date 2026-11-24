@@ -38,7 +38,13 @@ from structa_maestro.contracts.models import (
 )
 from structa_maestro.documents.inputs import DocumentInput, DocumentInputKind
 from structa_maestro.documents.models import DocumentSegment, PreparedDocument
-from structa_maestro.engine import ExtractionEngine, extract, extract_batch
+from structa_maestro.engine import (
+    ExtractionEngine,
+    aextract,
+    aextract_batch,
+    extract,
+    extract_batch,
+)
 from structa_maestro.exceptions import (
     ConfigurationError,
     ContractDeserializationError,
@@ -63,6 +69,7 @@ from structa_maestro.schema.rules import (
     ValidationRule,
 )
 from structa_maestro.strategies.base import (
+    AsyncExtractionStrategy,
     ExtractionStrategy,
     ProposedEvidence,
     ProposedField,
@@ -75,12 +82,18 @@ from structa_maestro.strategies.llm_config import (
     RetryPolicy,
     StructuredOutputMode,
 )
-from structa_maestro.strategies.llm_openai_compat import OpenAICompatibleLLMStrategy
+from structa_maestro.strategies.llm_openai_compat import (
+    AsyncOpenAICompatibleLLMStrategy,
+    OpenAICompatibleLLMStrategy,
+)
 from structa_maestro.strategies.schema_compiler import (
     CompiledOutputSchema,
     compile_extraction_output_schema,
 )
-from structa_maestro.strategies.testing import DeterministicTestStrategy
+from structa_maestro.strategies.testing import (
+    AsyncDeterministicTestStrategy,
+    DeterministicTestStrategy,
+)
 from structa_maestro.validation.validator import DeterministicValidator
 
 __version__ = "0.1.0"
@@ -89,6 +102,9 @@ __all__ = [
     "CONTRACT_VERSION",
     "ArithmeticRule",
     "ArithmeticTerm",
+    "AsyncDeterministicTestStrategy",
+    "AsyncExtractionStrategy",
+    "AsyncOpenAICompatibleLLMStrategy",
     "BatchDocumentInput",
     "BatchExtractionResult",
     "BatchOptions",
@@ -154,6 +170,8 @@ __all__ = [
     "ValidationRule",
     "ValidationStatus",
     "__version__",
+    "aextract",
+    "aextract_batch",
     "bind_record",
     "bind_records",
     "compile_extraction_output_schema",
