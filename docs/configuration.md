@@ -72,6 +72,15 @@ strategy = OpenAICompatibleLLMStrategy(
 )
 ```
 
+### Async HTTP Client Lifecycle & FastAPI Lifespan Guidance
+
+When using `AsyncOpenAICompatibleLLMStrategy` in async web services (such as FastAPI or Starlette):
+
+- **Shared Lifespan Client (Recommended for Services)**: Create one `httpx.AsyncClient(timeout=60.0)` during application startup/lifespan, pass it via `http_client=client`, and close it on application shutdown. `AsyncOpenAICompatibleLLMStrategy` will never close a caller-injected client.
+- **Scoped Pooled Context (Recommended for Scripts & Batch Jobs)**: Enter `async with AsyncOpenAICompatibleLLMStrategy(...) as strategy:` to pool a single strategy-owned `httpx.AsyncClient` across concurrent `aextract_batch` calls (nested `async with` is reference-counted and `await strategy.aclose()` is idempotent).
+- **Standalone One-Off Calls**: Calling `await aextract(...)` outside `async with` without an injected `http_client` safely creates and closes a per-call `httpx.AsyncClient` so sockets never leak.
+- **Task Cancellation**: `asyncio.CancelledError` is never swallowed by `aextract`, `aextract_batch`, or `AsyncOpenAICompatibleLLMStrategy`; cancelling an `aextract_batch` task cancels and awaits all active child tasks cleanly before propagating `CancelledError`.
+
 ## Logging & Data Minimization
 
 `structa_maestro` attaches a `NullHandler` by default and never logs raw document contents or API keys. Operational error messages scrub credential patterns and omit local host directory paths from `SourceMetadata.filename`.

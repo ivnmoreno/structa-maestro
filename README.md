@@ -154,6 +154,41 @@ except RecordBindingError as exc:
 - For partial multi-record extractions, pass `only_valid=True` to `bind_records(...)` to bind only `completed` + `valid` records.
 - See [examples/pydantic_schema_example.py](examples/pydantic_schema_example.py) and [Public API & CLI Reference](docs/api.md) for the complete type/constraint mapping table and unsupported construct rules.
 
+### Native Asyncio Extraction (`aextract`, `aextract_batch`, FastAPI)
+
+Use `AsyncOpenAICompatibleLLMStrategy` (backed by `httpx.AsyncClient` and non-blocking `asyncio.sleep` retries) with `aextract(...)` and `aextract_batch(...)` in async services:
+
+```python
+import os
+from structa_maestro import (
+    AsyncOpenAICompatibleLLMStrategy,
+    BatchOptions,
+    DocumentInput,
+    aextract,
+    aextract_batch,
+)
+
+# Pooled client via `async with` (or pass a shared FastAPI lifespan `http_client=httpx.AsyncClient(...)`)
+async with AsyncOpenAICompatibleLLMStrategy(
+    model="gpt-4o-mini",
+    api_key=os.environ["STRUCTA_MAESTRO_API_KEY"],
+) as strategy:
+    result = await aextract(
+        DocumentInput.from_bytes(upload_bytes, filename="invoice.pdf"),
+        schema,
+        strategy=strategy,
+    )
+    batch = await aextract_batch(
+        [doc_a, doc_b, doc_c],
+        schema,
+        strategy=strategy,
+        options=BatchOptions(max_workers=4),
+    )
+```
+
+- Blocking document parsing and synchronous strategies are automatically offloaded via `asyncio.to_thread`, and external `asyncio.CancelledError` propagates cleanly while cancelling in-flight batch tasks.
+- See [examples/async_extraction_example.py](examples/async_extraction_example.py) and [Configuration & Security](docs/configuration.md) for shared `httpx.AsyncClient` / FastAPI lifespan guidance.
+
 By default, `OpenAICompatibleLLMStrategy` enables strict schema-guided structured outputs with automatic `json_object` compatibility fallback, bounded exponential-backoff retries (`max_retries=2`, honoring `Retry-After`), a `120,000`-character input budget (`overflow_policy="reject"`), and embedded delimiter neutralization against prompt injection. See [Configuration & Security](docs/configuration.md) and [examples/hardened_llm_strategy_example.py](examples/hardened_llm_strategy_example.py) to customize these policies.
 
 For offline deterministic tests or custom extraction logic without external API keys, see `DeterministicTestStrategy` and [examples/](examples/).
@@ -227,5 +262,7 @@ See [docs/development.md](docs/development.md) for subset filtering, repeated-tr
 - [Configuration & Security](docs/configuration.md)
 - [Development & Quality Gates](docs/development.md)
 - [Testing Strategy & CI Rules](docs/TESTING.md)
+- [Contributing Guide](CONTRIBUTING.md)
+- [Code of Conduct](CODE_OF_CONDUCT.md)
 - [Security Policy](SECURITY.md)
 - [Changelog](CHANGELOG.md)

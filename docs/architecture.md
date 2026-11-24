@@ -21,11 +21,11 @@ Document Path / DocumentInput (bytes, text, stream) + ExtractionSchema (dict, JS
         │
         ▼
 3. Extraction Strategy (`structa_maestro.strategies`)
-   - Narrow `ExtractionStrategy` protocol returning provider-independent `StrategyOutput`
-   - Built-in: `OpenAICompatibleLLMStrategy` (httpx + strict `json_schema` compilation with
-     single-step `json_object` fallback, bounded retries/`Retry-After`/deadlines,
-     `InputBudgetPolicy` enforcement, nonce + delimiter-neutralized untrusted framing)
-   - Built-in: `DeterministicTestStrategy` (offline testing & evaluation)
+   - Narrow `ExtractionStrategy` (sync) & `AsyncExtractionStrategy` (asyncio) protocols returning `StrategyOutput`
+   - Built-in: `OpenAICompatibleLLMStrategy` & `AsyncOpenAICompatibleLLMStrategy` sharing a common base
+     (httpx `Client` / `AsyncClient`, strict `json_schema` compilation + single-step `json_object` fallback,
+     bounded retries/`Retry-After`/deadlines, `InputBudgetPolicy`, nonce + delimiter-neutralized framing)
+   - Built-in: `DeterministicTestStrategy` & `AsyncDeterministicTestStrategy` (offline testing & evaluation)
         │
         ▼
 4. Quality Verification & Assembly (`provenance`, `confidence`, `validation`, `builder`)
@@ -51,4 +51,4 @@ Canonical Output Record Contract v1.0 (`structa_maestro.contracts`)
 1. **Strategy-to-Contract Firewall**: Extraction strategies return internal `StrategyOutput` DTOs and never construct `ExtractionResult` directly. Provider-specific response fields (`choices`, `usage`, `id`, etc.) cannot leak into public outputs.
 2. **Non-Coercing Deterministic Validation & Opt-In Binding**: Schema validation is implemented independently of Pydantic coercion so extracted values are never silently altered (e.g., `"42"` is not silently coerced to `42`; `""`, `None`, and `FieldPresence.MISSING` remain strictly distinct). Optional downstream typed binding (`bind_record`/`bind_records`) runs strictly *after* canonical assembly using `strict=True`, leaving provenance, confidence, and validation intact on `ExtractionResult`.
 3. **Failure Reporting Boundary**: Caller definition errors (`SchemaDefinitionError`, `ConfigurationError`) raise immediately before work starts; all document, parsing, extraction, provenance, and validation failures return canonical `ExtractionResult` objects with `status="failed"` or `status="partial"`; opt-in typed binding rejects invalid/mismatched records with privacy-safe `RecordBindingError`.
-4. **Proportional Dependencies**: Direct `httpx` usage avoids vendor LLM SDK lock-in; strict schema compilation, bounded retries, `Retry-After` parsing, input budgeting, delimiter neutralization, cross-field validation, stateless in-process batch scheduling (`concurrent.futures`), and in-memory bounded streaming use Python's standard library; `ExtractionSchema.from_pydantic` and strict record binding reuse the existing `pydantic` dependency with zero new packages; `pypdf` and `python-docx` avoid native binary and AGPL licensing overhead; the thin CLI (`extract` and `extract-batch`) uses standard-library `argparse`.
+4. **Proportional Dependencies**: Direct `httpx` (`Client` and `AsyncClient`) usage avoids vendor LLM SDK lock-in; strict schema compilation, bounded retries, `Retry-After` parsing, input budgeting, delimiter neutralization, cross-field validation, stateless in-process sync (`concurrent.futures`) and async (`asyncio` + `to_thread`) batch scheduling, and in-memory bounded streaming use Python's standard library; `ExtractionSchema.from_pydantic` and strict record binding reuse the existing `pydantic` dependency with zero new packages; `pypdf` and `python-docx` avoid native binary and AGPL licensing overhead; the thin CLI (`extract` and `extract-batch`) uses standard-library `argparse`.

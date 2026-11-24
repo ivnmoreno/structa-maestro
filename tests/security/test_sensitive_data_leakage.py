@@ -416,3 +416,80 @@ def test_record_binding_error_never_leaks_sensitive_field_values() -> None:
     assert secret_acct not in all_issues
     assert "account_id" in err_msg
     assert "ssn" in err_msg
+
+
+@pytest.mark.security
+def test_concurrent_async_batch_never_leaks_secrets_raw_text_or_host_paths(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import asyncio
+
+    from structa_maestro import (
+        AsyncOpenAICompatibleLLMStrategy,
+        BatchExtractionResult,
+        BatchOptions,
+        DocumentInput,
+        RetryPolicy,
+        aextract_batch,
+    )
+
+    secret_key = "sk-async-concurrent-secret-666666"
+    markers = [f"ASYNC-CONFIDENTIAL-{i:02d}" for i in range(4)]
+    inputs = [
+        DocumentInput.from_text(f"Account: {markers[0]}\n", filename="/private/async/d0.txt"),
+        DocumentInput.from_bytes(
+            f"Account: {markers[1]}\n".encode(), filename=r"C:\private\async\d1.txt"
+        ),
+        DocumentInput.from_text(f"Account: {markers[2]}\n", filename="../../private/async/d2.txt"),
+        DocumentInput.from_text(f"Account: {markers[3]}\n", filename="d3.txt"),
+    ]
+    schema = {
+        "schema_id": "async-sec",
+        "schema_version": "1.0",
+        "fields": {"account": {"type": "string", "required": True}},
+    }
+
+    async def _fail_provider(_req: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError(f"Connect error Bearer {secret_key} echoing {markers[0]}")
+
+    async def _no_sleep(_d: float) -> None:
+        return None
+
+    async def _run() -> BatchExtractionResult:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(_fail_provider)) as client:
+            strategy = AsyncOpenAICompatibleLLMStrategy(
+                model="gpt-4o-mini",
+                api_key=secret_key,
+                http_client=client,
+                retry_policy=RetryPolicy(max_retries=1),
+                async_sleep_fn=_no_sleep,
+            )
+            assert secret_key not in repr(strategy)
+            return await aextract_batch(
+                inputs,
+                schema,
+                strategy=strategy,
+                options=BatchOptions(max_workers=4),
+            )
+
+    with caplog.at_level(logging.DEBUG, logger="structa_maestro"):
+        batch = asyncio.run(_run())
+
+    jsonl = batch.to_jsonl()
+    summary_json = batch.summary.to_json()
+    assert batch.summary.failed_count == 4
+    assert secret_key not in jsonl
+    assert secret_key not in summary_json
+    assert secret_key not in caplog.text
+    assert "private" not in jsonl
+    assert "private" not in summary_json
+    for tok in markers:
+        assert tok not in jsonl
+        assert tok not in summary_json
+        assert tok not in caplog.text
+    assert [r.source.filename if r.source else None for r in batch.results] == [
+        "d0.txt",
+        "d1.txt",
+        "d2.txt",
+        "d3.txt",
+    ]
