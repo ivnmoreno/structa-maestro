@@ -67,6 +67,18 @@ def test_public_api_exports_and_version() -> None:
         "RecordBindingError",
         "bind_record",
         "bind_records",
+        "AsyncExtractionObserver",
+        "BatchProgress",
+        "ExtractionEvent",
+        "ExtractionEventKind",
+        "ExtractionObserver",
+        "InMemoryTelemetryObserver",
+        "StageTiming",
+        "StageTimingSummary",
+        "StrategyTelemetry",
+        "StructuredLoggingObserver",
+        "TelemetrySummary",
+        "TokenUsage",
     ):
         assert hasattr(sm, symbol), f"Missing public symbol: {symbol}"
 

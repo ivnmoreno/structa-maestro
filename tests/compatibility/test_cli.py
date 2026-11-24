@@ -521,3 +521,192 @@ def test_cli_extract_stdin_filename_max_bytes_and_exit_codes(
         )
         == 1
     )
+
+
+def test_cli_telemetry_json_extract_and_extract_batch(
+    fixtures_dir: Path,
+    tmp_path: Path,
+    contract_json_schema: dict[str, Any],
+) -> None:
+    from structa_maestro import StrategyTelemetry, TokenUsage
+
+    schema_path = fixtures_dir / "schemas" / "invoice_schema.json"
+    doc_path = fixtures_dir / "documents" / "txt" / "invoice_001.txt"
+
+    ok_strat = DeterministicTestStrategy(
+        StrategyOutput(
+            records=(
+                ProposedRecord(
+                    fields={
+                        "invoice_number": ProposedField(value="INV-2026-001"),
+                        "vendor_name": ProposedField(value="Acme"),
+                        "issue_date": ProposedField(value=date(2026, 3, 15)),
+                        "total_amount": ProposedField(value=Decimal("100.00")),
+                        "currency": ProposedField(value="USD"),
+                    }
+                ),
+            ),
+            telemetry=StrategyTelemetry(
+                attempts=1,
+                retry_count=0,
+                structured_output_mode_used="json_schema",
+                token_usage=TokenUsage(prompt_tokens=90, completion_tokens=30, total_tokens=120),
+            ),
+        )
+    )
+
+    # 1. extract exit 0 writes telemetry JSON while keeping stdout pure Contract v1.0
+    tel_single = tmp_path / "single_telemetry.json"
+    stdout_ok = io.StringIO()
+    code0 = run_cli(
+        [
+            "extract",
+            str(doc_path),
+            "--schema",
+            str(schema_path),
+            "--telemetry-json",
+            str(tel_single),
+        ],
+        stdout=stdout_ok,
+        stderr=io.StringIO(),
+        strategy_override=ok_strat,
+    )
+    assert code0 == 0
+    jsonschema.validate(instance=json.loads(stdout_ok.getvalue()), schema=contract_json_schema)
+    tel_data = json.loads(tel_single.read_text(encoding="utf-8"))
+    assert tel_data["total_extractions"] == 1
+    assert tel_data["completed_count"] == 1
+    assert tel_data["valid_count"] == 1
+    assert tel_data["total_tokens"] == 120
+    assert set(tel_data["stage_timings"].keys()) == {"document_load", "strategy", "finalization"}
+
+    # 2. extract exit 2 (missing file) STILL writes telemetry JSON
+    tel_fail = tmp_path / "fail_telemetry.json"
+    code2 = run_cli(
+        [
+            "extract",
+            str(tmp_path / "does_not_exist.txt"),
+            "--schema",
+            str(schema_path),
+            "--telemetry-json",
+            str(tel_fail),
+        ],
+        stdout=io.StringIO(),
+        stderr=io.StringIO(),
+        strategy_override=ok_strat,
+    )
+    assert code2 == 2
+    assert json.loads(tel_fail.read_text(encoding="utf-8"))["failed_count"] == 1
+
+    # 3. extract-batch exit 2 with --fail-fast writes telemetry summary with skipped_documents
+    tel_batch = tmp_path / "batch_telemetry.json"
+    stdout_batch = io.StringIO()
+    code_b2 = run_cli(
+        [
+            "extract-batch",
+            str(tmp_path / "missing_first.txt"),
+            str(doc_path),
+            "--schema",
+            str(schema_path),
+            "--fail-fast",
+            "--telemetry-json",
+            str(tel_batch),
+        ],
+        stdout=stdout_batch,
+        stderr=io.StringIO(),
+        strategy_override=ok_strat,
+    )
+    assert code_b2 == 2
+    batch_tel = json.loads(tel_batch.read_text(encoding="utf-8"))
+    assert batch_tel["failed_count"] == 1
+    assert batch_tel["skipped_documents"] == 1
+    assert batch_tel["aborted_early_count"] == 1
+
+    # 4. Eager exit 1: blank path, collision with --output/--summary-json, missing schema -> no file
+    not_created = tmp_path / "never_created.json"
+    assert (
+        run_cli(
+            [
+                "extract",
+                str(doc_path),
+                "--schema",
+                str(tmp_path / "no_schema.json"),
+                "--telemetry-json",
+                str(not_created),
+            ],
+            stdout=io.StringIO(),
+            stderr=io.StringIO(),
+            strategy_override=ok_strat,
+        )
+        == 1
+    )
+    assert not not_created.exists()
+
+    collide = tmp_path / "collide.json"
+    assert (
+        run_cli(
+            [
+                "extract",
+                str(doc_path),
+                "--schema",
+                str(schema_path),
+                "--output",
+                str(collide),
+                "--telemetry-json",
+                str(collide),
+            ],
+            stdout=io.StringIO(),
+            stderr=io.StringIO(),
+            strategy_override=ok_strat,
+        )
+        == 1
+    )
+    assert (
+        run_cli(
+            [
+                "extract-batch",
+                str(doc_path),
+                "--schema",
+                str(schema_path),
+                "--summary-json",
+                str(collide),
+                "--telemetry-json",
+                str(collide),
+            ],
+            stdout=io.StringIO(),
+            stderr=io.StringIO(),
+            strategy_override=ok_strat,
+        )
+        == 1
+    )
+    assert (
+        run_cli(
+            ["extract", str(doc_path), "--schema", str(schema_path), "--telemetry-json", "   "],
+            stdout=io.StringIO(),
+            stderr=io.StringIO(),
+            strategy_override=ok_strat,
+        )
+        == 1
+    )
+
+    # 5. Telemetry write OSError (target is a directory) -> exit 1 with sanitized stderr error
+    dir_target = tmp_path / "a_dir"
+    dir_target.mkdir()
+    err_io = io.StringIO()
+    assert (
+        run_cli(
+            [
+                "extract",
+                str(doc_path),
+                "--schema",
+                str(schema_path),
+                "--telemetry-json",
+                str(dir_target),
+            ],
+            stdout=io.StringIO(),
+            stderr=err_io,
+            strategy_override=ok_strat,
+        )
+        == 1
+    )
+    assert "Telemetry write error:" in err_io.getvalue()

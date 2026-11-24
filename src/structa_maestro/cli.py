@@ -26,6 +26,7 @@ from structa_maestro.strategies.llm_config import (
     parse_max_input_chars_arg,
 )
 from structa_maestro.strategies.llm_openai_compat import OpenAICompatibleLLMStrategy
+from structa_maestro.telemetry import InMemoryTelemetryObserver
 
 _DEFAULT_API_KEY_ENV = "STRUCTA_MAESTRO_API_KEY"
 _DEFAULT_BASE_URL = "https://api.openai.com/v1"
@@ -98,6 +99,11 @@ def _add_common_extraction_args(parser: argparse.ArgumentParser) -> None:
         choices=[p.value for p in InputBudgetOverflowPolicy],
         default=InputBudgetOverflowPolicy.REJECT.value,
         help="Overflow policy when input exceeds --max-input-chars (default: reject).",
+    )
+    parser.add_argument(
+        "--telemetry-json",
+        default=None,
+        help="Optional path to write privacy-safe TelemetrySummary JSON.",
     )
 
 
@@ -229,7 +235,19 @@ def run_cli(
     secrets_to_scrub = (api_key_val,) if api_key_val else ()
 
     if args.command == "extract":
+        telemetry_observer: InMemoryTelemetryObserver | None = None
         try:
+            if args.telemetry_json is not None:
+                if not args.telemetry_json.strip():
+                    raise ConfigurationError("--telemetry-json must be a non-empty file path.")
+                if (
+                    args.output
+                    and Path(args.output).resolve() == Path(args.telemetry_json).resolve()
+                ):
+                    raise ConfigurationError(
+                        "--output and --telemetry-json cannot point to the same file."
+                    )
+                telemetry_observer = InMemoryTelemetryObserver()
             if args.filename is not None and args.document != "-":
                 raise ConfigurationError(
                     "--filename is only supported when reading from stdin ('-')."
@@ -250,12 +268,17 @@ def run_cli(
                 )
             else:
                 doc_target = args.document
+            extract_kwargs: dict[str, object] = {
+                "strategy": strategy,
+                "limits": limits,
+                "document_id": args.document_id,
+            }
+            if telemetry_observer is not None:
+                extract_kwargs["observers"] = (telemetry_observer,)
             result = extract(
                 doc_target,
                 schema,
-                strategy=strategy,
-                limits=limits,
-                document_id=args.document_id,
+                **extract_kwargs,  # type: ignore[arg-type]
             )
         except StructaMaestroError as exc:
             err.write(f"Error: {sanitize_message(str(exc), secrets=secrets_to_scrub)}\n")
@@ -281,6 +304,19 @@ def run_cli(
         else:
             out.write(serialized + "\n")
 
+        if telemetry_observer is not None and args.telemetry_json:
+            try:
+                tel_path = Path(args.telemetry_json)
+                tel_path.parent.mkdir(parents=True, exist_ok=True)
+                tel_path.write_text(
+                    telemetry_observer.summary().to_json(indent=2) + "\n",
+                    encoding="utf-8",
+                )
+            except OSError as exc:
+                safe_err = sanitize_message(type(exc).__name__, secrets=secrets_to_scrub)
+                err.write(f"Telemetry write error: {safe_err}\n")
+                return 1
+
         if (
             result.status == ProcessingStatus.COMPLETED
             and result.validation.status == ValidationStatus.VALID
@@ -289,6 +325,7 @@ def run_cli(
         return 2
 
     # extract-batch subcommand
+    batch_telemetry_observer: InMemoryTelemetryObserver | None = None
     try:
         if (
             args.output
@@ -296,6 +333,19 @@ def run_cli(
             and Path(args.output).resolve() == Path(args.summary_json).resolve()
         ):
             raise ConfigurationError("--output and --summary-json cannot point to the same file.")
+        if args.telemetry_json is not None:
+            if not args.telemetry_json.strip():
+                raise ConfigurationError("--telemetry-json must be a non-empty file path.")
+            tel_resolved = Path(args.telemetry_json).resolve()
+            if args.output and Path(args.output).resolve() == tel_resolved:
+                raise ConfigurationError(
+                    "--output and --telemetry-json cannot point to the same file."
+                )
+            if args.summary_json and Path(args.summary_json).resolve() == tel_resolved:
+                raise ConfigurationError(
+                    "--summary-json and --telemetry-json cannot point to the same file."
+                )
+            batch_telemetry_observer = InMemoryTelemetryObserver()
         schema = ExtractionSchema.from_json_file(args.schema)
         batch_options = BatchOptions(
             max_workers=args.max_workers,
@@ -311,12 +361,17 @@ def run_cli(
             raise ConfigurationError(
                 "No supported input documents (.txt, .pdf, .docx) were discovered."
             )
+        batch_kwargs: dict[str, object] = {
+            "strategy": strategy,
+            "limits": limits,
+            "options": batch_options,
+        }
+        if batch_telemetry_observer is not None:
+            batch_kwargs["observers"] = (batch_telemetry_observer,)
         batch_result = extract_batch(
             discovered_paths,
             schema,
-            strategy=strategy,
-            limits=limits,
-            options=batch_options,
+            **batch_kwargs,  # type: ignore[arg-type]
         )
     except StructaMaestroError as exc:
         err.write(f"Error: {sanitize_message(str(exc), secrets=secrets_to_scrub)}\n")
@@ -348,6 +403,19 @@ def run_cli(
         except OSError as exc:
             safe_err = sanitize_message(type(exc).__name__, secrets=secrets_to_scrub)
             err.write(f"Summary write error: {safe_err}\n")
+            return 1
+
+    if batch_telemetry_observer is not None and args.telemetry_json:
+        try:
+            tel_path = Path(args.telemetry_json)
+            tel_path.parent.mkdir(parents=True, exist_ok=True)
+            tel_path.write_text(
+                batch_telemetry_observer.summary().to_json(indent=2) + "\n",
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            safe_err = sanitize_message(type(exc).__name__, secrets=secrets_to_scrub)
+            err.write(f"Telemetry write error: {safe_err}\n")
             return 1
 
     summary = batch_result.summary

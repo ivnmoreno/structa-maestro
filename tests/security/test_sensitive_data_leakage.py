@@ -493,3 +493,145 @@ def test_concurrent_async_batch_never_leaks_secrets_raw_text_or_host_paths(
         "d2.txt",
         "d3.txt",
     ]
+
+
+@pytest.mark.security
+def test_telemetry_events_summaries_and_structured_logs_never_leak_sensitive_data(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import asyncio
+    import json
+
+    from structa_maestro import (
+        AsyncOpenAICompatibleLLMStrategy,
+        BatchOptions,
+        DocumentInput,
+        ExtractionEvent,
+        InMemoryTelemetryObserver,
+        OpenAICompatibleLLMStrategy,
+        RetryPolicy,
+        StructuredLoggingObserver,
+        aextract_batch,
+        extract_batch,
+    )
+
+    api_secret = "sk-telemetry-privacy-secret-777888"
+    pii_ssn = "SSN-987-65-4321"
+    raw_quote = "CONFIDENTIAL SALARY PAYLOAD 995000 USD"
+    host_dir = "super_secret_tenant_dir"
+
+    inputs = [
+        DocumentInput.from_text(
+            f"Employee SSN: {pii_ssn}\nNote: {raw_quote}\n",
+            filename=f"/{host_dir}/nested/payroll_0.txt",
+        ),
+        DocumentInput.from_text(
+            f"Employee SSN: {pii_ssn}\nNote: {raw_quote}\n",
+            filename=rf"C:\{host_dir}\payroll_1.txt",
+        ),
+    ]
+    schema = {
+        "schema_id": "payroll-privacy",
+        "schema_version": "1.0",
+        "fields": {"ssn": {"type": "string", "required": True}},
+    }
+
+    ok_body = {
+        "choices": [
+            {
+                "finish_reason": "stop",
+                "message": {
+                    "content": json.dumps(
+                        {
+                            "records": [
+                                {
+                                    "fields": {
+                                        "ssn": {
+                                            "presence": "present",
+                                            "value": pii_ssn,
+                                            "confidence": 0.99,
+                                            "ambiguous": False,
+                                            "evidence": [
+                                                {
+                                                    "quote": f"Employee SSN: {pii_ssn}",
+                                                    "relationship": "direct",
+                                                }
+                                            ],
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    )
+                },
+            }
+        ],
+        "usage": {"prompt_tokens": 50, "completion_tokens": 20, "total_tokens": 70},
+    }
+
+    class _LeakyErrorObserver:
+        def on_event(self, _event: ExtractionEvent) -> None:
+            raise RuntimeError(f"Callback failed with api_key={api_secret}")
+
+    # Sync concurrent batch
+    sync_mem = InMemoryTelemetryObserver()
+    sync_log = StructuredLoggingObserver(logger_name="structa_maestro.sec_tel", level=logging.INFO)
+    with (
+        caplog.at_level(logging.INFO, logger="structa_maestro"),
+        httpx.Client(
+            transport=httpx.MockTransport(lambda _r: httpx.Response(200, json=ok_body))
+        ) as sclient,
+    ):
+        s_strat = OpenAICompatibleLLMStrategy(
+            model="gpt-4o-mini",
+            api_key=api_secret,
+            http_client=sclient,
+            retry_policy=RetryPolicy(max_retries=0),
+        )
+        extract_batch(
+            inputs,
+            schema,
+            strategy=s_strat,
+            options=BatchOptions(max_workers=2),
+            observers=[sync_mem, sync_log, _LeakyErrorObserver()],
+        )
+
+    # Async concurrent batch
+    async_mem = InMemoryTelemetryObserver()
+
+    async def _run_async() -> None:
+        async def _aok(_r: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json=ok_body)
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(_aok)) as aclient:
+            a_strat = AsyncOpenAICompatibleLLMStrategy(
+                model="gpt-4o-mini",
+                api_key=api_secret,
+                http_client=aclient,
+                retry_policy=RetryPolicy(max_retries=0),
+            )
+            await aextract_batch(
+                inputs,
+                schema,
+                strategy=a_strat,
+                options=BatchOptions(max_workers=2),
+                observers=[async_mem, sync_log, _LeakyErrorObserver()],
+            )
+
+    with caplog.at_level(logging.INFO, logger="structa_maestro"):
+        asyncio.run(_run_async())
+
+    all_serialized = "\n".join(
+        [
+            *[e.to_json() for e in sync_mem.events()],
+            sync_mem.summary().to_json(),
+            *[e.to_json() for e in async_mem.events()],
+            async_mem.summary().to_json(),
+            caplog.text,
+        ]
+    )
+    for forbidden in (api_secret, pii_ssn, raw_quote, host_dir):
+        assert forbidden not in all_serialized
+
+    assert sync_mem.summary().total_tokens == 140
+    assert async_mem.summary().total_tokens == 140

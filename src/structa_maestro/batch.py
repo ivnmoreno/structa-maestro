@@ -29,6 +29,7 @@ from structa_maestro.contracts.models import (
 from structa_maestro.documents.inputs import DocumentInput, DocumentInputKind
 from structa_maestro.documents.loader import DocumentLoadResult, read_stream_bounded
 from structa_maestro.exceptions import ConfigurationError
+from structa_maestro.telemetry import BatchProgress
 
 MAX_BATCH_WORKERS = 32
 SUPPORTED_BATCH_EXTENSIONS: frozenset[str] = frozenset({".txt", ".pdf", ".docx"})
@@ -285,18 +286,55 @@ def run_batch_extraction(
     schema_metadata: SchemaMetadata,
     options: BatchOptions,
     extract_one: Callable[[_PreparedBatchItem], ExtractionResult],
+    batch_id: str | None = None,
+    on_item_complete: Callable[[int, ExtractionResult, BatchProgress], None] | None = None,
 ) -> BatchExtractionResult:
     """Execute stateless sequential or bounded concurrent batch extraction in exact input order."""
     started = time.perf_counter()
+    resolved_batch_id = batch_id if batch_id is not None else str(uuid4())
     total = len(inputs)
     aborted_early = False
+    processed_count = 0
+    completed_count = 0
+    partial_count = 0
+    failed_count = 0
+
+    def _record_progress(idx: int, res: ExtractionResult, *, aborted_now: bool) -> None:
+        nonlocal processed_count, completed_count, partial_count, failed_count
+        processed_count += 1
+        if res.status == ProcessingStatus.COMPLETED:
+            completed_count += 1
+        elif res.status == ProcessingStatus.PARTIAL:
+            partial_count += 1
+        elif res.status == ProcessingStatus.FAILED:
+            failed_count += 1
+        if on_item_complete is not None:
+            on_item_complete(
+                idx,
+                res,
+                BatchProgress(
+                    batch_id=resolved_batch_id,
+                    total_documents=total,
+                    processed_documents=processed_count,
+                    skipped_documents=0,
+                    item_index=idx,
+                    completed_count=completed_count,
+                    partial_count=partial_count,
+                    failed_count=failed_count,
+                    aborted_early=aborted_now,
+                ),
+            )
 
     if options.max_workers == 1:
         ordered_results: list[ExtractionResult] = []
         for idx, doc_input in enumerate(inputs):
             res = extract_one(doc_input)
             ordered_results.append(res)
-            if options.fail_fast and res.status == ProcessingStatus.FAILED and idx < total - 1:
+            will_abort = (
+                options.fail_fast and res.status == ProcessingStatus.FAILED and idx < total - 1
+            )
+            _record_progress(idx, res, aborted_now=will_abort)
+            if will_abort:
                 aborted_early = True
                 break
         final_results = tuple(ordered_results)
@@ -322,6 +360,11 @@ def run_batch_extraction(
                     completed_by_idx[idx] = res
                     if options.fail_fast and res.status == ProcessingStatus.FAILED:
                         stop_submitting = True
+                    _record_progress(
+                        idx,
+                        res,
+                        aborted_now=stop_submitting and next_idx < total,
+                    )
 
                 while not stop_submitting and next_idx < total and len(in_flight) < worker_count:
                     fut = pool.submit(extract_one, inputs[next_idx])
@@ -339,7 +382,7 @@ def run_batch_extraction(
         elapsed_ms=elapsed_ms,
     )
     return BatchExtractionResult(
-        batch_id=str(uuid4()),
+        batch_id=resolved_batch_id,
         schema_metadata=schema_metadata,
         results=final_results,
         summary=summary,
@@ -352,18 +395,57 @@ async def run_async_batch_extraction(
     schema_metadata: SchemaMetadata,
     options: BatchOptions,
     extract_one: Callable[[_PreparedBatchItem], Coroutine[Any, Any, ExtractionResult]],
+    batch_id: str | None = None,
+    aon_item_complete: (
+        Callable[[int, ExtractionResult, BatchProgress], Coroutine[Any, Any, None]] | None
+    ) = None,
 ) -> BatchExtractionResult:
     """Execute stateless sequential or bounded concurrent asyncio batch extraction in order."""
     started = time.perf_counter()
+    resolved_batch_id = batch_id if batch_id is not None else str(uuid4())
     total = len(inputs)
     aborted_early = False
+    processed_count = 0
+    completed_count = 0
+    partial_count = 0
+    failed_count = 0
+
+    async def _arecord_progress(idx: int, res: ExtractionResult, *, aborted_now: bool) -> None:
+        nonlocal processed_count, completed_count, partial_count, failed_count
+        processed_count += 1
+        if res.status == ProcessingStatus.COMPLETED:
+            completed_count += 1
+        elif res.status == ProcessingStatus.PARTIAL:
+            partial_count += 1
+        elif res.status == ProcessingStatus.FAILED:
+            failed_count += 1
+        if aon_item_complete is not None:
+            await aon_item_complete(
+                idx,
+                res,
+                BatchProgress(
+                    batch_id=resolved_batch_id,
+                    total_documents=total,
+                    processed_documents=processed_count,
+                    skipped_documents=0,
+                    item_index=idx,
+                    completed_count=completed_count,
+                    partial_count=partial_count,
+                    failed_count=failed_count,
+                    aborted_early=aborted_now,
+                ),
+            )
 
     if options.max_workers == 1:
         ordered_results: list[ExtractionResult] = []
         for idx, item in enumerate(inputs):
             res = await extract_one(item)
             ordered_results.append(res)
-            if options.fail_fast and res.status == ProcessingStatus.FAILED and idx < total - 1:
+            will_abort = (
+                options.fail_fast and res.status == ProcessingStatus.FAILED and idx < total - 1
+            )
+            await _arecord_progress(idx, res, aborted_now=will_abort)
+            if will_abort:
                 aborted_early = True
                 break
         final_results = tuple(ordered_results)
@@ -391,6 +473,11 @@ async def run_async_batch_extraction(
                     completed_by_idx[idx] = res
                     if options.fail_fast and res.status == ProcessingStatus.FAILED:
                         stop_submitting = True
+                    await _arecord_progress(
+                        idx,
+                        res,
+                        aborted_now=stop_submitting and next_idx < total,
+                    )
 
                 while not stop_submitting and next_idx < total and len(in_flight) < worker_count:
                     task = asyncio.create_task(extract_one(inputs[next_idx]))
@@ -416,7 +503,7 @@ async def run_async_batch_extraction(
         elapsed_ms=elapsed_ms,
     )
     return BatchExtractionResult(
-        batch_id=str(uuid4()),
+        batch_id=resolved_batch_id,
         schema_metadata=schema_metadata,
         results=final_results,
         summary=summary,

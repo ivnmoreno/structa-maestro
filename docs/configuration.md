@@ -87,3 +87,42 @@ When using `AsyncOpenAICompatibleLLMStrategy` in async web services (such as Fas
 
 - **In-Memory Inputs**: `DocumentInput` snapshots mutable byte buffers, redacts raw payloads and host paths from `__repr__`, sanitizes POSIX/Windows filenames to basename-only, and writes zero temporary files to disk.
 - **Pydantic Schema Derivation & Strict Binding**: `ExtractionSchema.from_pydantic(...)` inspects Pydantic v2 field metadata directly with zero dynamic code evaluation, and `RecordBindingError` strips Pydantic's `input_value` so raw extracted values and confidential document fields never appear in binding error messages or `issues`.
+- **Observability & Telemetry Privacy Minimization**: `ExtractionEvent`, `TelemetrySummary`, `InMemoryTelemetryObserver`, and `StructuredLoggingObserver` structurally exclude raw document text, extracted field values, provenance quotes, host directory paths (filenames are sanitized to basename-only), and credentials. Only opaque IDs, numeric timings/counts, enum statuses, and diagnostic codes are emitted.
+
+## Integrating Observability with OpenTelemetry & Prometheus
+
+`structa-maestro` intentionally avoids third-party APM dependencies. Bridge `ExtractionObserver` / `AsyncExtractionObserver` to your metrics or tracing stack in a few lines:
+
+```python
+from structa_maestro import ExtractionEvent, ExtractionEventKind
+
+
+class PrometheusTelemetryAdapter:
+    """Thin adapter forwarding ExtractionEvents to Prometheus counters/histograms."""
+
+    def __init__(self, doc_counter, stage_histogram, token_counter) -> None:
+        self._doc_counter = doc_counter
+        self._stage_histogram = stage_histogram
+        self._token_counter = token_counter
+
+    def on_event(self, event: ExtractionEvent) -> None:
+        if event.event_kind == ExtractionEventKind.EXTRACTION_COMPLETED and event.status:
+            self._doc_counter.labels(
+                schema_id=event.schema_id or "unknown",
+                status=event.status.value,
+            ).inc()
+            for timing in event.stage_timings:
+                self._stage_histogram.labels(stage=timing.stage).observe(timing.elapsed_ms)
+        elif (
+            event.event_kind == ExtractionEventKind.STRATEGY_COMPLETED
+            and event.strategy_telemetry
+            and event.strategy_telemetry.token_usage
+        ):
+            usage = event.strategy_telemetry.token_usage
+            if usage.total_tokens is not None:
+                self._token_counter.labels(strategy=event.strategy_name or "unknown").inc(
+                    usage.total_tokens
+                )
+```
+
+For async I/O-bound telemetry sinks (e.g., flushing spans or webhooks over HTTP), implement `AsyncExtractionObserver` (`async def aon_event(self, event: ExtractionEvent) -> None`) so the event loop is never blocked. For CLI jobs, pass `--telemetry-json telemetry.json` to `structa-maestro extract` or `extract-batch` to export `TelemetrySummary` JSON without altering Contract `v1.0` output on `stdout`.

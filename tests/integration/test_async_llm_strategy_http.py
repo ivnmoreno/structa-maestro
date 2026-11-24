@@ -244,3 +244,95 @@ def test_async_llm_strategy_propagates_cancellation_during_retry_sleep(
                 await task
 
     asyncio.run(_run())
+
+
+def test_async_llm_strategy_populates_strategy_telemetry_parity(
+    tmp_path: Path,
+    invoice_schema_dict: dict[str, Any],
+) -> None:
+    from structa_maestro import ExtractionEventKind, InMemoryTelemetryObserver, TokenUsage
+
+    async def _run() -> None:
+        doc = tmp_path / "async_tel.txt"
+        doc.write_text(
+            "Invoice Number: INV-2026-001\nVendor: Acme Industrial Supply Ltd.\n"
+            "Issue Date: 2026-03-15\nTotal Amount: 1250.50\nCurrency: USD\n",
+            encoding="utf-8",
+        )
+
+        # Fallback + cumulative usage on malformed retry
+        step = 0
+
+        async def _handler(_req: httpx.Request) -> httpx.Response:
+            nonlocal step
+            step += 1
+            if step == 1:
+                return httpx.Response(400, text='{"error":"json_schema not supported"}')
+            if step == 2:
+                return httpx.Response(
+                    200,
+                    json={
+                        "choices": [{"message": {"content": "bad"}, "finish_reason": "stop"}],
+                        "usage": {"prompt_tokens": 80, "completion_tokens": 10},
+                    },
+                )
+            payload = _ok_body()
+            payload["usage"] = {"prompt_tokens": 80, "completion_tokens": 30, "total_tokens": 110}
+            return httpx.Response(200, json=payload)
+
+        async def _no_sleep(_d: float) -> None:
+            return None
+
+        obs = InMemoryTelemetryObserver()
+        async with httpx.AsyncClient(transport=httpx.MockTransport(_handler)) as client:
+            strat = AsyncOpenAICompatibleLLMStrategy(
+                model="gpt-4o-mini",
+                api_key="sk-async-tel-12345",
+                http_client=client,
+                retry_policy=RetryPolicy(max_retries=2, jitter=False),
+                async_sleep_fn=_no_sleep,
+            )
+            res = await aextract(doc, invoice_schema_dict, strategy=strat, observers=[obs])
+
+        assert res.status == ProcessingStatus.COMPLETED
+        strat_ev = next(
+            e for e in obs.events() if e.event_kind == ExtractionEventKind.STRATEGY_COMPLETED
+        )
+        tel = strat_ev.strategy_telemetry
+        assert tel is not None
+        assert tel.attempts == 3
+        assert tel.retry_count == 1
+        assert tel.fallback_used is True
+        assert tel.structured_output_mode_used == "json_object"
+        # total_tokens only reported on attempt 3 (110); prompt=160, completion=40
+        assert tel.token_usage == TokenUsage(
+            prompt_tokens=160,
+            completion_tokens=40,
+            total_tokens=110,
+        )
+
+        # Pre-network TRUNCATE + STRICT on open schema preserves truncated=True & attempts=0
+        open_schema = dict(invoice_schema_dict, allow_additional_fields=True)
+        obs2 = InMemoryTelemetryObserver()
+        async with httpx.AsyncClient(transport=httpx.MockTransport(_handler)) as client2:
+            strict_trunc = AsyncOpenAICompatibleLLMStrategy(
+                model="gpt-4o-mini",
+                api_key="sk-async-tel-12345",
+                http_client=client2,
+                structured_output_mode=StructuredOutputMode.STRICT,
+                input_budget=InputBudgetPolicy(
+                    max_input_chars=40,
+                    overflow_policy=InputBudgetOverflowPolicy.TRUNCATE,
+                ),
+            )
+            res2 = await aextract(doc, open_schema, strategy=strict_trunc, observers=[obs2])
+        assert res2.status == ProcessingStatus.FAILED
+        tel2 = next(
+            e for e in obs2.events() if e.event_kind == ExtractionEventKind.STRATEGY_COMPLETED
+        ).strategy_telemetry
+        assert tel2 is not None
+        assert tel2.attempts == 0
+        assert tel2.structured_output_mode_used is None
+        assert tel2.truncated is True
+
+    asyncio.run(_run())
