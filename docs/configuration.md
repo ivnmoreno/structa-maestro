@@ -6,7 +6,7 @@ All limits are enforced prior to and during document parsing to guard against me
 
 | Option | Default | CLI Flag | Behavior When Exceeded |
 | --- | --- | --- | --- |
-| `max_file_bytes` | `26_214_400` (25 MB) | `--max-file-mb` | Returns canonical `failed` result (`resource_limit_exceeded`) |
+| `max_file_bytes` | `26_214_400` (25 MB) | `--max-file-mb` / `--max-bytes` | Returns canonical `failed` result (`resource_limit_exceeded`); streams cap reads at `max_file_bytes + 1` |
 | `max_decompressed_bytes` | `52_428_800` (50 MB) | `--max-decompressed-mb` | Rejects oversized extracted text or DOCX ZIP archives before inflation |
 | `max_pages` | `200` | `--max-pages` | Rejects oversized PDFs prior to page iteration |
 
@@ -75,3 +75,6 @@ strategy = OpenAICompatibleLLMStrategy(
 ## Logging & Data Minimization
 
 `structa_maestro` attaches a `NullHandler` by default and never logs raw document contents or API keys. Operational error messages scrub credential patterns and omit local host directory paths from `SourceMetadata.filename`.
+
+- **In-Memory Inputs**: `DocumentInput` snapshots mutable byte buffers, redacts raw payloads and host paths from `__repr__`, sanitizes POSIX/Windows filenames to basename-only, and writes zero temporary files to disk.
+- **Pydantic Schema Derivation & Strict Binding**: `ExtractionSchema.from_pydantic(...)` inspects Pydantic v2 field metadata directly with zero dynamic code evaluation, and `RecordBindingError` strips Pydantic's `input_value` so raw extracted values and confidential document fields never appear in binding error messages or `issues`.

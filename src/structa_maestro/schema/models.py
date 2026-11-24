@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from structa_maestro.contracts.enums import ExtractionCardinality, FieldType
 from structa_maestro.exceptions import SchemaDefinitionError
 from structa_maestro.schema.rules import ValidationRule, validate_schema_rules
+
+if TYPE_CHECKING:
+    from pydantic import BaseModel
 
 _NUMERIC_TYPES = frozenset({FieldType.INTEGER, FieldType.DECIMAL})
 _DEFAULT_MAX_DEPTH = 16
@@ -203,6 +206,43 @@ class ExtractionSchema:
         from structa_maestro.schema.loader import load_schema_from_json_file
 
         return load_schema_from_json_file(path)
+
+    @classmethod
+    def from_pydantic(
+        cls,
+        model_cls: type[BaseModel],
+        *,
+        schema_id: str | None = None,
+        schema_version: str = "1.0",
+        cardinality: ExtractionCardinality | str = ExtractionCardinality.SINGLE,
+        rules: Sequence[ValidationRule] = (),
+        allow_additional_fields: bool | None = None,
+        max_depth: int = _DEFAULT_MAX_DEPTH,
+    ) -> ExtractionSchema:
+        """Deterministically derive an ExtractionSchema from a Pydantic v2 BaseModel subclass."""
+        from structa_maestro.schema.pydantic_adapter import load_schema_from_pydantic
+
+        return load_schema_from_pydantic(
+            model_cls,
+            schema_id=schema_id,
+            schema_version=schema_version,
+            cardinality=cardinality,
+            rules=rules,
+            allow_additional_fields=allow_additional_fields,
+            max_depth=max_depth,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize this schema into a JSON-safe declarative dictionary."""
+        from structa_maestro.schema.serializer import serialize_schema_to_dict
+
+        return serialize_schema_to_dict(self)
+
+    def to_json(self, *, indent: int | None = None) -> str:
+        """Serialize this schema into a declarative JSON string (compatible with CLI --schema)."""
+        from structa_maestro.schema.serializer import serialize_schema_to_json
+
+        return serialize_schema_to_json(self, indent=indent)
 
 
 def _validate_depth(

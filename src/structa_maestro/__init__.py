@@ -8,6 +8,7 @@ from structa_maestro.batch import (
     BatchOptions,
     BatchSummary,
 )
+from structa_maestro.binding import bind_record, bind_records
 from structa_maestro.builder.result_builder import ResultBuilder
 from structa_maestro.confidence.normalizer import ConfidenceNormalizer
 from structa_maestro.config import DocumentLimits, SecretValue
@@ -41,6 +42,7 @@ from structa_maestro.engine import ExtractionEngine, extract, extract_batch
 from structa_maestro.exceptions import (
     ConfigurationError,
     ContractDeserializationError,
+    RecordBindingError,
     SchemaDefinitionError,
     StructaMaestroError,
 )
@@ -136,6 +138,7 @@ __all__ = [
     "ProposedRecord",
     "ProvenanceAssociator",
     "ProvenanceEvidence",
+    "RecordBindingError",
     "ResultBuilder",
     "RetryPolicy",
     "RuleSeverity",
@@ -151,6 +154,8 @@ __all__ = [
     "ValidationRule",
     "ValidationStatus",
     "__version__",
+    "bind_record",
+    "bind_records",
     "compile_extraction_output_schema",
     "extract",
     "extract_batch",

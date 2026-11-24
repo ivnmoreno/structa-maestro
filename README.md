@@ -104,6 +104,56 @@ print(result.to_json(indent=2))
 
 In-memory inputs (`bytes`/`bytearray`/`memoryview`, plain text, and binary streams) are supported without writing temporary files via `DocumentInput.from_bytes(...)`, `DocumentInput.from_text(...)`, `DocumentInput.from_stream(...)`, and `DocumentInput.from_path(...)` across both `extract(...)` and `extract_batch(...)`; see [examples/in_memory_extraction_example.py](examples/in_memory_extraction_example.py).
 
+### Pydantic v2 Schemas, JSON Export & Strict Typed Binding
+
+Prefer defining your schema once as a Pydantic v2 `BaseModel` instead of a manual dictionary:
+
+```python
+from datetime import date
+from decimal import Decimal
+from enum import StrEnum
+from pydantic import BaseModel, Field
+from structa_maestro import (
+    ExtractionSchema,
+    RecordBindingError,
+    bind_records,
+    extract,
+)
+
+
+class Currency(StrEnum):
+    USD = "USD"
+    EUR = "EUR"
+
+
+class Invoice(BaseModel):
+    invoice_number: str = Field(pattern=r"^INV-\d{4}-\d+$")
+    vendor_name: str = Field(min_length=1)
+    issue_date: date
+    total_amount: Decimal = Field(ge=0)
+    currency: Currency = Currency.USD
+    notes: str | None = None
+
+
+# 1. Derive an immutable ExtractionSchema (optionally with cross-field ValidationRules)
+schema = ExtractionSchema.from_pydantic(Invoice, schema_id="invoice-schema")
+
+# 2. Optional: export to JSON for CLI `structa-maestro extract --schema invoice_schema.json`
+# Path("invoice_schema.json").write_text(schema.to_json(indent=2), encoding="utf-8")
+
+# 3. Extract canonical Contract v1.0 result, then opt into strict non-coercing binding
+result = extract("invoice.pdf", schema, strategy=strategy)
+try:
+    invoices: list[Invoice] = bind_records(result, Invoice)
+except RecordBindingError as exc:
+    # Failed/invalid results are refused safely (no raw values leaked in exc)
+    print(result.status, result.validation.status, exc)
+```
+
+- `bind_record(record, Model)` and `bind_records(result, Model, only_valid=False)` use strict, non-coercing Pydantic validation (`strict=True`) while keeping full provenance, confidence, warnings, and status intact on `ExtractionResult`.
+- For partial multi-record extractions, pass `only_valid=True` to `bind_records(...)` to bind only `completed` + `valid` records.
+- See [examples/pydantic_schema_example.py](examples/pydantic_schema_example.py) and [Public API & CLI Reference](docs/api.md) for the complete type/constraint mapping table and unsupported construct rules.
+
 By default, `OpenAICompatibleLLMStrategy` enables strict schema-guided structured outputs with automatic `json_object` compatibility fallback, bounded exponential-backoff retries (`max_retries=2`, honoring `Retry-After`), a `120,000`-character input budget (`overflow_policy="reject"`), and embedded delimiter neutralization against prompt injection. See [Configuration & Security](docs/configuration.md) and [examples/hardened_llm_strategy_example.py](examples/hardened_llm_strategy_example.py) to customize these policies.
 
 For offline deterministic tests or custom extraction logic without external API keys, see `DeterministicTestStrategy` and [examples/](examples/).
