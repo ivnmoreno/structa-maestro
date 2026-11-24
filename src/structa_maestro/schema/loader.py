@@ -239,7 +239,10 @@ def _parse_field_spec(
             raise SchemaDefinitionError(
                 f"Field {name!r} 'allowed_values'/'enum' must be a list or tuple."
             )
-        allowed_values = tuple(raw_allowed)
+        if field_type in (FieldType.DECIMAL, FieldType.DATE):
+            allowed_values = tuple(_coerce_condition_literal(v, field_type) for v in raw_allowed)
+        else:
+            allowed_values = tuple(raw_allowed)
 
     constraints = FieldConstraints(
         min_value=min_value,

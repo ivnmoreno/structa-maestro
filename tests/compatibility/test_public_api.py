@@ -59,6 +59,9 @@ def test_public_api_exports_and_version() -> None:
         "SchemaDefinitionError",
         "ConfigurationError",
         "ContractDeserializationError",
+        "RecordBindingError",
+        "bind_record",
+        "bind_records",
     ):
         assert hasattr(sm, symbol), f"Missing public symbol: {symbol}"
 

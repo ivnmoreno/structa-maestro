@@ -365,3 +365,54 @@ def test_in_memory_stream_dos_zip_bomb_path_traversal_and_concurrent_secret_isol
         "doc2.txt",
         "doc3.txt",
     ]
+
+
+@pytest.mark.security
+def test_record_binding_error_never_leaks_sensitive_field_values() -> None:
+    from pydantic import BaseModel, Field
+
+    from structa_maestro import (
+        ExtractedField,
+        ExtractedRecord,
+        FieldPresence,
+        RecordBindingError,
+        ValidationOutcome,
+        ValidationStatus,
+        bind_record,
+    )
+
+    class SensitiveCustomer(BaseModel):
+        account_id: int = Field(ge=1)
+        ssn: str = Field(pattern=r"^\d{3}-\d{2}-\d{4}$")
+
+    secret_val = "SSN-999-88-7777-TOP-SECRET"
+    secret_acct = "SECRET-ACCOUNT-TOKEN-444555"
+    rec = ExtractedRecord(
+        record_id="rec-sec-1",
+        status=ProcessingStatus.COMPLETED,
+        fields={
+            "account_id": ExtractedField(
+                presence=FieldPresence.PRESENT,
+                value=secret_acct,
+                validation=ValidationOutcome(status=ValidationStatus.VALID),
+            ),
+            "ssn": ExtractedField(
+                presence=FieldPresence.PRESENT,
+                value=secret_val,
+                validation=ValidationOutcome(status=ValidationStatus.VALID),
+            ),
+        },
+        validation=ValidationOutcome(status=ValidationStatus.VALID),
+    )
+
+    with pytest.raises(RecordBindingError) as exc_info:
+        bind_record(rec, SensitiveCustomer)
+
+    err_msg = str(exc_info.value)
+    all_issues = " | ".join(exc_info.value.issues)
+    assert secret_val not in err_msg
+    assert secret_acct not in err_msg
+    assert secret_val not in all_issues
+    assert secret_acct not in all_issues
+    assert "account_id" in err_msg
+    assert "ssn" in err_msg

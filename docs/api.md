@@ -16,8 +16,40 @@ All stable public symbols are exported from the top-level `structa_maestro` pack
 
 - `ExtractionSchema.from_dict(data)` — accepts either `structa-maestro`'s declarative schema format (`schema_id`, `schema_version`, `cardinality`, `fields`) or a JSON Schema subset (`title`, `properties`, `required`, `additionalProperties`).
 - `ExtractionSchema.from_json_file(path)` — loads a JSON schema file with duplicate-key rejection.
+- `ExtractionSchema.from_pydantic(model_cls, *, schema_id=None, schema_version="1.0", cardinality=ExtractionCardinality.SINGLE, rules=(), allow_additional_fields=None, max_depth=16)` — deterministically compiles a Pydantic v2 `BaseModel` subclass into an immutable `ExtractionSchema` using pure type/metadata introspection (zero arbitrary code execution).
+- `ExtractionSchema.to_dict() -> dict[str, Any]` and `ExtractionSchema.to_json(*, indent: int | None = None) -> str` — export any `ExtractionSchema` (including nested structures, `Decimal`/`date` literals, and all cross-field `rules`) into a JSON-safe declarative schema that round-trips losslessly through `from_dict(...)` / `from_json_file(...)` and works directly with `structa-maestro extract --schema` and `extract-batch --schema`.
 - Programmatic classes: `ExtractionSchema`, `FieldSpec`, `FieldConstraints`, `FieldType`, `ExtractionCardinality`.
 - Default unexpected-field policy: `allow_additional_fields=False` (extra fields flagged as `unexpected_field` validation errors unless explicitly opted in).
+
+### Pydantic v2 Type & Constraint Mapping (`ExtractionSchema.from_pydantic`)
+
+| Pydantic v2 Construct | Mapped `ExtractionSchema` Representation | Notes |
+| --- | --- | --- |
+| `str` | `FieldType.STRING` | Maps `min_length`, `max_length`, `pattern` |
+| `int` | `FieldType.INTEGER` | Maps `ge`/`le`, plus exact integer `gt=n` → `min_value=n + 1` and `lt=n` → `max_value=n - 1` |
+| `Decimal` / `float` | `FieldType.DECIMAL` | Maps `ge`/`le` as exact `Decimal`; non-integer `gt`/`lt` raises `SchemaDefinitionError` |
+| `bool` | `FieldType.BOOLEAN` | Strictly distinct from `int` |
+| `datetime.date` | `FieldType.DATE` | `datetime.datetime` is eagerly rejected (`SchemaDefinitionError`) to preserve Contract `v1.0` |
+| Homogeneous `Enum` / `StrEnum` / `IntEnum` / `Literal[...]` | Matching scalar `FieldType` + `allowed_values` | `Literal[..., None]` sets `nullable=True`; mixed-type or empty definitions fail eagerly |
+| `Optional[T]` / `T \| None` | Inner `FieldSpec` with `nullable=True` | Multi-type `Union[A, B]` fails eagerly (`SchemaDefinitionError`) |
+| Nested `BaseModel` | `FieldType.OBJECT` + `properties` | Maps child `ConfigDict(extra="allow")` → `allow_additional_fields=True`; cycles fail eagerly |
+| `list[T]` | `FieldType.ARRAY` + `items` | Maps `min_length`/`max_length` → `min_items`/`max_items` |
+| `Field(default=...)` / `default_factory` | `required=False` | Fields without defaults map to `required=True` |
+| Unsupported (`Any`, `dict`, `set`, `tuple`, custom classes, `multiple_of`, differing `alias`/`validation_alias`, empty model, depth > `max_depth`) | Eager `SchemaDefinitionError` | Never silently drops types or constraints |
+
+### Strict Opt-In Typed Record Binding (`bind_record`, `bind_records`)
+
+- `bind_record(record: ExtractedRecord, model_cls: type[T]) -> T`: Materializes one `completed` + `valid` canonical record into a typed Pydantic v2 model instance using `model_validate(..., strict=True)`.
+- `bind_records(result: ExtractionResult, model_cls: type[T], *, only_valid: bool = False) -> list[T]`:
+  - `only_valid=False` *(default)*: Requires `result.status == COMPLETED` and `result.validation.status == VALID`; raises `RecordBindingError` on `failed`, `partial`, or `invalid` results.
+  - `only_valid=True`: Binds only records with `status == COMPLETED` and `validation.status == VALID` in order (useful for multi-record `partial` results).
+- **Non-Coercion & Epistemic Honesty**:
+  - Strings (`"42"`, `"true"`, `"2026-03-15"`) are **never** coerced to numbers, booleans, or dates.
+  - Exact-type `Enum` member values and finite `Decimal`↔`float` / `int`→`Decimal` numeric representations are adapted solely to satisfy the declared target Pydantic field annotation.
+  - `FieldPresence.MISSING` fields are omitted (required missing fields fail binding; optional fields with defaults use the model default), whereas `FieldPresence.PRESENT` `None` values are passed explicitly as `None`.
+  - Binding is strictly read-only on `ExtractionResult`: confidence, provenance, warnings, errors, and processing status remain fully intact.
+  - Note on JSON-deserialized results: `ExtractionResult.from_json(...)` restores top-level `Decimal` and `date` fields automatically under Contract `v1.0`, while `Decimal`/`date` values nested inside `OBJECT`/`ARRAY` remain JSON strings after deserialization; bind directly on in-memory `ExtractionResult` objects when nested models contain `Decimal` or `date` sub-fields.
+  - See [examples/pydantic_schema_example.py](../examples/pydantic_schema_example.py).
 - **Declarative Cross-Field & Conditional Rules (`ExtractionSchema.rules`)**:
   - Programmatic models: `ComparisonRule` (`ComparisonOperator`), `ArithmeticRule` + `ArithmeticTerm`, `ConditionalPresenceRule` (`ConditionalPresenceKind`) + `FieldCondition` (`ConditionOperator`), `GroupPresenceRule` (`GroupPresenceKind`), `RuleSeverity` (`error` / `warning`), `ValidationRule`.
   - Declarative JSON `"rules"` array supporting `kind` values `"comparison"`, `"arithmetic"` (including nested array collection sums and optional `treat_missing_as_zero`), `"required_if"`, `"forbidden_if"`, `"mutually_exclusive"`, and `"at_least_one_of"`.
@@ -55,9 +87,10 @@ All stable public symbols are exported from the top-level `structa_maestro` pack
 
 ## Exceptions
 
-- `SchemaDefinitionError`: invalid, empty, duplicate-key, conflicting, or overly deep schema.
-- `ConfigurationError`: invalid `DocumentLimits`, `RetryPolicy`, `InputBudgetPolicy`, `StructuredOutputMode`, strategy URL/timeout/temperature, or missing secret.
+- `SchemaDefinitionError`: invalid, empty, duplicate-key, conflicting, cyclic, unsupported Pydantic, or overly deep schema.
+- `ConfigurationError`: invalid `DocumentLimits`, `DocumentInput`, `BatchOptions`, `RetryPolicy`, `InputBudgetPolicy`, `StructuredOutputMode`, strategy URL/timeout/temperature, or missing secret.
 - `ContractDeserializationError`: malformed JSON, missing canonical keys, or unsupported `contract_version`.
+- `RecordBindingError`: failed/invalid record/result passed to `bind_record`/`bind_records` or strict Pydantic validation failure; carries `record_id` and privacy-safe `issues` (field locations + error types, never raw extracted values).
 
 ## Extraction Strategy Diagnostic Codes (`PipelineStage.EXTRACTION`)
 
