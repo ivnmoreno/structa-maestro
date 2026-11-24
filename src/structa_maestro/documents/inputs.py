@@ -15,6 +15,9 @@ SUPPORTED_MEDIA_TYPES: dict[str, DocumentFormat] = {
     "text/plain": DocumentFormat.TXT,
     "application/pdf": DocumentFormat.PDF,
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document": DocumentFormat.DOCX,
+    "text/html": DocumentFormat.HTML,
+    "text/markdown": DocumentFormat.MARKDOWN,
+    "message/rfc822": DocumentFormat.EML,
 }
 
 
@@ -168,9 +171,15 @@ class DocumentInput:
                 )
             if not isinstance(self.text, str):
                 raise ConfigurationError("DocumentInput.from_text requires a str payload.")
-            if self.media_type is not None and self.media_type != "text/plain":
+            if self.media_type is not None and self.media_type not in (
+                "text/plain",
+                "text/html",
+                "text/markdown",
+                "message/rfc822",
+            ):
                 raise ConfigurationError(
-                    "DocumentInput.from_text only supports media_type='text/plain' or None."
+                    "DocumentInput.from_text only supports text-based media_type values "
+                    "('text/plain', 'text/html', 'text/markdown', 'message/rfc822') or None."
                 )
 
         elif self.kind == DocumentInputKind.STREAM:

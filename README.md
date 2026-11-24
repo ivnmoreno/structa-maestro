@@ -9,7 +9,7 @@
 [![Type Checked: mypy](https://img.shields.io/badge/type%20checked-mypy-blue.svg)](https://mypy-lang.org/)
 [![Commitizen friendly](https://img.shields.io/badge/commitizen-friendly-brightgreen.svg)](https://commitizen-tools.github.io/commitizen/)
 
-**Structured Data Extraction Engine** — a reusable Python library (`structa_maestro`) with a minimal thin CLI (`structa-maestro`) that transforms unstructured documents (`TXT`, text-based `PDF`, `DOCX`) into validated, schema-conforming, provenance-backed canonical records.
+**Structured Data Extraction Engine** — a reusable Python library (`structa_maestro`) with a minimal thin CLI (`structa-maestro`) that transforms unstructured documents (`TXT`, text-based `PDF`, `DOCX`, `HTML`, `Markdown`, and `EML`) into validated, schema-conforming, provenance-backed canonical records.
 
 ---
 
@@ -36,11 +36,14 @@ Unstructured business documents (invoices, contracts, employment records, applic
 
 ## Supported Input Formats
 
-- **TXT** (UTF-8, UTF-8 BOM, UTF-16, ASCII, Latin-1 / Windows-1252)
-- **Text-based PDF** (multi-page text extraction with 1-indexed `page` locations and page-limit protection)
-- **DOCX** (paragraphs, headings, and tables with pre-open ZIP-bomb protection and `paragraph`/`section` locations)
+- **TXT** (`text/plain`, `.txt`) — UTF-8, UTF-8 BOM, UTF-16, ASCII, Latin-1 / Windows-1252 with 1-indexed `line_start`/`line_end` locations
+- **Text-based PDF** (`application/pdf`, `.pdf`) — multi-page text extraction with 1-indexed `page` locations and page-limit protection
+- **DOCX** (`application/vnd.openxmlformats-officedocument.wordprocessingml.document`, `.docx`) — paragraphs, headings, and tables with pre-open ZIP-bomb protection and `paragraph`/`section` locations
+- **HTML** (`text/html`, `.html`, `.htm`) — hardened stdlib parser stripping `<script>`, `<style>`, `<noscript>`, `<template>`, and comments with incremental entity-expansion limits, zero network fetches, and heading-driven `section`/`paragraph` locations
+- **Markdown** (`text/markdown`, `.md`, `.markdown`) — ATX/Setext heading hierarchy into `section` (ignoring `#` inside fenced code blocks) with 1-indexed `paragraph`, `line_start`, and `line_end` locations
+- **EML** (`message/rfc822`, `.eml`) — hardened stdlib RFC 5322 email parser extracting normalized `Headers` (`From`, `To`, `Cc`, `Date`, `Subject`) and text bodies (`text/plain` preferred, sanitized HTML fallback), skipping binary/file attachments safely (`attachments_skipped` warning), and enforcing MIME part-count & nesting-depth caps
 
-Format detection inspects actual file signatures (magic bytes / archive contents) rather than blindly trusting filename extensions.
+Format detection inspects actual file signatures (magic bytes, binary checks, and archive contents) rather than blindly trusting filename extensions. See [examples/multiformat_extraction_example.py](examples/multiformat_extraction_example.py).
 
 ---
 

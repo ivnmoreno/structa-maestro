@@ -6,11 +6,14 @@ from enum import StrEnum
 
 
 class DocumentFormat(StrEnum):
-    """Supported MVP input document formats."""
+    """Supported input document formats."""
 
     TXT = "txt"
     PDF = "pdf"
     DOCX = "docx"
+    HTML = "html"
+    MARKDOWN = "markdown"
+    EML = "eml"
 
 
 class FieldType(StrEnum):

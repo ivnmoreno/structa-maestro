@@ -18,6 +18,9 @@ from structa_maestro.schema.models import ExtractionSchema
 
 DEFAULT_MANIFEST_PATH = Path(__file__).parent / "dataset" / "manifest.json"
 REQUIRED_FULL_CORPUS_SIZE = 50
+REQUIRED_CORPUS_FORMATS: frozenset[DocumentFormat] = frozenset(
+    {DocumentFormat.TXT, DocumentFormat.PDF, DocumentFormat.DOCX}
+)
 
 
 def load_dataset(
@@ -104,7 +107,7 @@ def validate_dataset(
             raise ValueError(
                 f"Golden corpus missing categories: {sorted(c.value for c in missing_cats)}"
             )
-        missing_fmts = set(DocumentFormat) - formats_present
+        missing_fmts = REQUIRED_CORPUS_FORMATS - formats_present
         if missing_fmts:
             raise ValueError(
                 f"Golden corpus missing formats: {sorted(f.value for f in missing_fmts)}"

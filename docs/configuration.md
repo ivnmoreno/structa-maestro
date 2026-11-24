@@ -12,6 +12,11 @@ All limits are enforced prior to and during document parsing to guard against me
 
 Passing non-positive values raises `ConfigurationError`.
 
+Additional built-in stdlib parser safety controls (always enabled with zero external network I/O):
+- **HTML (`text/html`)**: Strips `<script>`, `<style>`, `<noscript>`, `<template>`, and HTML comments; enforces `max_decompressed_bytes` incrementally against entity-expansion bloat; never fetches remote `<img src>` / `<link>` / DTD URLs.
+- **Markdown (`text/markdown`)**: Ignores `#` inside fenced code blocks when tracking `section` headings and enforces `max_file_bytes` / `max_decompressed_bytes`.
+- **EML (`message/rfc822`)**: Enforces `max_file_bytes`, `max_decompressed_bytes`, a `128`-part MIME limit, and a `16`-level multipart nesting depth limit (`resource_limit_exceeded`); skips untrusted binary/file attachments safely while emitting a count-only `attachments_skipped` warning.
+
 ## External Model Provider Configuration
 
 When using `OpenAICompatibleLLMStrategy`:

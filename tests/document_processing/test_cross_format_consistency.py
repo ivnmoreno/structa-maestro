@@ -72,9 +72,13 @@ def _regex_invoice_handler(doc: PreparedDocument, schema: ExtractionSchema) -> S
     )
 
 
-def test_equivalent_txt_pdf_docx_produce_identical_field_values(
+def test_equivalent_six_formats_produce_identical_field_values_and_provenance(
     tmp_path: Path, invoice_schema_dict: dict[str, Any]
 ) -> None:
+    from email.message import EmailMessage
+
+    from structa_maestro import DocumentInput
+
     lines = [
         "Invoice Number: INV-2026-001",
         "Vendor: Acme Industrial Supply Ltd.",
@@ -87,25 +91,64 @@ def test_equivalent_txt_pdf_docx_produce_identical_field_values(
     pdf_path = create_minimal_pdf(tmp_path / "inv.pdf", ["\n".join(lines)])
     docx_path = create_minimal_docx(tmp_path / "inv.docx", paragraphs=lines)
 
+    html_path = tmp_path / "inv.html"
+    html_body = "<h1>Invoice Details</h1>\n" + "\n".join(f"<p>{ln}</p>" for ln in lines)
+    html_path.write_text(f"<!DOCTYPE html><html><body>{html_body}</body></html>", encoding="utf-8")
+
+    md_path = tmp_path / "inv.md"
+    md_path.write_text("# Invoice Details\n\n" + "\n\n".join(lines) + "\n", encoding="utf-8")
+
+    eml_msg = EmailMessage()
+    eml_msg["From"] = "billing@acme.example"
+    eml_msg["Subject"] = "Invoice INV-2026-001"
+    eml_msg.set_content("\n".join(lines) + "\n")
+    eml_path = tmp_path / "inv.eml"
+    eml_path.write_bytes(eml_msg.as_bytes())
+
     strategy = DeterministicTestStrategy(_regex_invoice_handler)
     r_txt = extract(txt_path, invoice_schema_dict, strategy=strategy, document_id="doc-txt")
     r_pdf = extract(pdf_path, invoice_schema_dict, strategy=strategy, document_id="doc-pdf")
     r_docx = extract(docx_path, invoice_schema_dict, strategy=strategy, document_id="doc-docx")
+    r_html = extract(html_path, invoice_schema_dict, strategy=strategy, document_id="doc-html")
+    r_md = extract(md_path, invoice_schema_dict, strategy=strategy, document_id="doc-md")
+    r_eml = extract(eml_path, invoice_schema_dict, strategy=strategy, document_id="doc-eml")
+    r_html_mem = extract(
+        DocumentInput.from_text(
+            f"<!DOCTYPE html><html><body>{html_body}</body></html>",
+            filename="mem.html",
+            media_type="text/html",
+        ),
+        invoice_schema_dict,
+        strategy=strategy,
+        document_id="doc-html-mem",
+    )
 
-    for res in (r_txt, r_pdf, r_docx):
+    all_results = (r_txt, r_pdf, r_docx, r_html, r_md, r_eml, r_html_mem)
+    for res in all_results:
         assert res.status == ProcessingStatus.COMPLETED
         assert res.validation.status == ValidationStatus.VALID
 
     for field_name in ("invoice_number", "vendor_name", "issue_date", "total_amount", "currency"):
-        v_txt = r_txt.records[0].fields[field_name].value
-        v_pdf = r_pdf.records[0].fields[field_name].value
-        v_docx = r_docx.records[0].fields[field_name].value
-        assert v_txt == v_pdf == v_docx
+        expected = r_txt.records[0].fields[field_name].value
+        for res in all_results[1:]:
+            assert res.records[0].fields[field_name].value == expected
 
-    # Format-specific location precision preserved honestly
+    # Format-specific location precision preserved honestly across all 6 formats
     assert r_txt.records[0].fields["invoice_number"].provenance[0].location is not None
     assert r_txt.records[0].fields["invoice_number"].provenance[0].location.line_start == 1
     assert r_pdf.records[0].fields["invoice_number"].provenance[0].location is not None
     assert r_pdf.records[0].fields["invoice_number"].provenance[0].location.page == 1
     assert r_docx.records[0].fields["invoice_number"].provenance[0].location is not None
     assert r_docx.records[0].fields["invoice_number"].provenance[0].location.paragraph == 1
+    html_loc = r_html.records[0].fields["invoice_number"].provenance[0].location
+    assert (
+        html_loc is not None and html_loc.section == "Invoice Details" and html_loc.paragraph == 2
+    )
+    md_loc = r_md.records[0].fields["invoice_number"].provenance[0].location
+    assert md_loc is not None and md_loc.section == "Invoice Details" and md_loc.line_start == 3
+    eml_loc = r_eml.records[0].fields["invoice_number"].provenance[0].location
+    assert (
+        eml_loc is not None
+        and eml_loc.section in ("Headers", "Body")
+        and eml_loc.paragraph is not None
+    )

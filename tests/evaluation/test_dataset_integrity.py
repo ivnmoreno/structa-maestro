@@ -6,7 +6,13 @@ from pathlib import Path
 
 import pytest
 
-from evals.dataset import DEFAULT_MANIFEST_PATH, filter_cases, load_dataset, validate_dataset
+from evals.dataset import (
+    DEFAULT_MANIFEST_PATH,
+    REQUIRED_CORPUS_FORMATS,
+    filter_cases,
+    load_dataset,
+    validate_dataset,
+)
 from evals.materializer import materialize_document
 from evals.models import (
     ChallengeProfile,
@@ -16,7 +22,6 @@ from evals.models import (
     GoldenDatasetManifest,
     MaterializationKind,
 )
-from structa_maestro.contracts.enums import DocumentFormat
 
 
 @pytest.mark.evaluation
@@ -30,7 +35,7 @@ def test_full_golden_corpus_has_50_cases_8_categories_3_formats_10_profiles() ->
     profiles = {p for c in manifest.cases for p in c.challenge_profiles}
 
     assert categories == set(DocumentCategory)
-    assert formats == set(DocumentFormat)
+    assert formats == REQUIRED_CORPUS_FORMATS
     assert profiles == set(ChallengeProfile)
 
     # Every MaterializationKind is exercised across the 50 cases

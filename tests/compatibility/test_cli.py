@@ -230,7 +230,7 @@ def test_cli_extract_batch_directory_jsonl_summary_and_exit_codes(
     (batch_dir / "01.txt").write_text("Invoice Number: INV-2026-001\n", encoding="utf-8")
     (batch_dir / "02.txt").write_text("Invoice Number: INV-2026-002\n", encoding="utf-8")
     (nested / "03.txt").write_text("Invoice Number: INV-2026-003\n", encoding="utf-8")
-    (batch_dir / "ignore.md").write_text("# ignored\n", encoding="utf-8")
+    (batch_dir / "ignore.bin").write_text("ignored binary\n", encoding="utf-8")
 
     ok_strat = DeterministicTestStrategy(
         StrategyOutput(
@@ -710,3 +710,77 @@ def test_cli_telemetry_json_extract_and_extract_batch(
         == 1
     )
     assert "Telemetry write error:" in err_io.getvalue()
+
+
+def test_cli_extract_and_batch_support_html_markdown_and_eml(
+    fixtures_dir: Path,
+    tmp_path: Path,
+    contract_json_schema: dict[str, Any],
+) -> None:
+    from email.message import EmailMessage
+
+    schema_path = fixtures_dir / "schemas" / "invoice_schema.json"
+    multi_dir = tmp_path / "multi"
+    multi_dir.mkdir()
+    (multi_dir / "01.html").write_text(
+        "<!DOCTYPE html><html><body><p>Invoice Number: INV-2026-001</p></body></html>",
+        encoding="utf-8",
+    )
+    (multi_dir / "02.md").write_text("# Inv\n\nInvoice Number: INV-2026-001\n", encoding="utf-8")
+    msg = EmailMessage()
+    msg["From"] = "billing@acme.example"
+    msg["Subject"] = "Invoice"
+    msg.set_content("Invoice Number: INV-2026-001\n")
+    (multi_dir / "03.eml").write_bytes(msg.as_bytes())
+    (multi_dir / "04.bin").write_bytes(b"\x00\x01\x02")
+
+    ok_strat = DeterministicTestStrategy(
+        StrategyOutput(
+            records=(
+                ProposedRecord(
+                    fields={
+                        "invoice_number": ProposedField(value="INV-2026-001"),
+                        "vendor_name": ProposedField(value="Acme"),
+                        "issue_date": ProposedField(value=date(2026, 3, 15)),
+                        "total_amount": ProposedField(value=Decimal("100.00")),
+                        "currency": ProposedField(value="USD"),
+                    }
+                ),
+            )
+        )
+    )
+
+    # 1. CLI extract-batch discovers .html, .md, .eml and ignores .bin -> 3 Contract v1.0 lines
+    stdout_b = io.StringIO()
+    assert (
+        run_cli(
+            ["extract-batch", str(multi_dir), "--schema", str(schema_path)],
+            stdout=stdout_b,
+            stderr=io.StringIO(),
+            strategy_override=ok_strat,
+        )
+        == 0
+    )
+    lines = [json.loads(ln) for ln in stdout_b.getvalue().splitlines()]
+    assert len(lines) == 3
+    for rec in lines:
+        jsonschema.validate(instance=rec, schema=contract_json_schema)
+    assert [rec["source"]["media_type"] for rec in lines] == [
+        "text/html",
+        "text/markdown",
+        "message/rfc822",
+    ]
+
+    # 2. CLI extract '-' sniffs HTML stdin cleanly
+    stdout_in = io.StringIO()
+    assert (
+        run_cli(
+            ["extract", "-", "--schema", str(schema_path), "--filename", "portal.html"],
+            stdout=stdout_in,
+            stderr=io.StringIO(),
+            stdin_buffer=io.BytesIO(b"<!DOCTYPE html><html><body><p>Hello</p></body></html>"),
+            strategy_override=ok_strat,
+        )
+        == 0
+    )
+    assert json.loads(stdout_in.getvalue())["source"]["media_type"] == "text/html"

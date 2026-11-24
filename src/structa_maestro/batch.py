@@ -32,7 +32,9 @@ from structa_maestro.exceptions import ConfigurationError
 from structa_maestro.telemetry import BatchProgress
 
 MAX_BATCH_WORKERS = 32
-SUPPORTED_BATCH_EXTENSIONS: frozenset[str] = frozenset({".txt", ".pdf", ".docx"})
+SUPPORTED_BATCH_EXTENSIONS: frozenset[str] = frozenset(
+    {".txt", ".pdf", ".docx", ".html", ".htm", ".md", ".markdown", ".eml"}
+)
 
 
 @dataclass(frozen=True, slots=True)

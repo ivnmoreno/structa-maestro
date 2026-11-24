@@ -83,11 +83,14 @@ def test_discover_batch_documents_sorted_recursive_hidden_and_symlinks(tmp_path:
 
     f_b = root / "b.TXT"
     f_a = root / "a.pdf"
-    f_ign = root / "notes.md"
+    f_html = root / "d.html"
+    f_md = root / "e.md"
+    f_eml = root / "f.eml"
+    f_ign = root / "notes.bin"
     f_dot = root / ".secret.txt"
     f_sub = nested / "c.docx"
     f_hid = hidden_dir / "ignored.txt"
-    for f in (f_b, f_a, f_ign, f_dot, f_sub, f_hid):
+    for f in (f_b, f_a, f_html, f_md, f_eml, f_ign, f_dot, f_sub, f_hid):
         f.write_text("sample", encoding="utf-8")
 
     # Broken symlink must be skipped safely
@@ -99,12 +102,12 @@ def test_discover_batch_documents_sorted_recursive_hidden_and_symlinks(tmp_path:
     os.symlink(root, loop_link)
 
     non_rec = discover_batch_documents([root], recursive=False)
-    assert non_rec == [f_a, f_b]
+    assert non_rec == [f_a, f_b, f_html, f_md, f_eml]
 
     rec = discover_batch_documents([root], recursive=True)
-    assert rec == [f_a, f_b, f_sub]
+    assert rec == [f_a, f_b, f_html, f_md, f_eml, f_sub]
 
     # Explicit nonexistent file path passes through in exact caller order
     missing = tmp_path / "missing.txt"
     mixed = discover_batch_documents([missing, root], recursive=False)
-    assert mixed == [missing, f_a, f_b]
+    assert mixed == [missing, f_a, f_b, f_html, f_md, f_eml]
