@@ -7,6 +7,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ## [Unreleased]
 
 ### Added
+- **In-Memory Document Inputs & CLI `stdin` Support (`DocumentInput`, `extract -`)**:
+  - Added immutable `DocumentInput` and `DocumentInputKind` (`from_path`, `from_bytes`, `from_text`, `from_stream`) with mutable-buffer snapshotting, payload-redacting `__repr__`, POSIX/Windows basename-only filename sanitization, eager media-type validation, and bounded chunked stream reading (`max_file_bytes + 1` cap) with zero temporary files written to disk.
+  - Extended `extract`, `ExtractionEngine.extract`, `extract_batch`, and `ExtractionEngine.extract_batch` to accept `DocumentInput` seamlessly alongside `str | Path | BatchDocumentInput`, including safe concurrent batch stream pre-materialization and full fault isolation.
+  - Extended `structa-maestro extract` to accept `-` for binary `stdin` piping with stdin-only `--filename` and byte-exact `--max-bytes` override, plus offline runnable example `examples/in_memory_extraction_example.py`.
 - **Stateless Batch Document Extraction (`extract_batch`, `extract-batch`)**:
   - Added stateless in-process batch orchestration (`extract_batch`, `ExtractionEngine.extract_batch`) with immutable models (`BatchDocumentInput`, `BatchOptions`, `BatchSummary`, `BatchExtractionResult`), eager pre-flight validation, exact input-order preservation, and lossless `to_jsonl()`, `to_dict()`, and `to_json()` helpers preserving Canonical Output Record Contract `v1.0` per item.
   - Added bounded in-process concurrency (`max_workers` in `1..32`, default `1`) using a bounded sliding-window worker pool with strict cross-document isolation, default continue-on-error fault isolation, and optional `fail_fast` stopping with honest `skipped_documents` / `aborted_early` accounting.

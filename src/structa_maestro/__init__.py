@@ -35,6 +35,7 @@ from structa_maestro.contracts.models import (
     SourceMetadata,
     ValidationOutcome,
 )
+from structa_maestro.documents.inputs import DocumentInput, DocumentInputKind
 from structa_maestro.documents.models import DocumentSegment, PreparedDocument
 from structa_maestro.engine import ExtractionEngine, extract, extract_batch
 from structa_maestro.exceptions import (
@@ -104,6 +105,8 @@ __all__ = [
     "DeterministicValidator",
     "DiagnosticIssue",
     "DocumentFormat",
+    "DocumentInput",
+    "DocumentInputKind",
     "DocumentLimits",
     "DocumentSegment",
     "EvidenceRelationship",

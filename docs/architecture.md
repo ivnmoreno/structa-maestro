@@ -5,15 +5,16 @@
 ## Processing Lifecycle
 
 ```text
-Document Path + ExtractionSchema
+Document Path / DocumentInput (bytes, text, stream) + ExtractionSchema
         │
         ▼  (Pre-flight: raises SchemaDefinitionError / ConfigurationError)
 1. Schema Interpretation (`structa_maestro.schema`)
         │
         ▼  (Operational failures isolated into canonical `failed` / `partial` results)
 2. Document Input & Parsing (`structa_maestro.documents`)
-   - Path/permission checks & configurable DocumentLimits (25MB / 50MB / 200 pages)
-   - Magic-byte / ZIP-container format detection (TXT, PDF, DOCX)
+   - Path/permission checks, basename-only filename sanitization, & bounded chunked stream reading
+   - Configurable DocumentLimits (25MB / 50MB / 200 pages) with zero temporary files written to disk
+   - Magic-byte / ZIP-container format detection (TXT, PDF, DOCX) + media_type hint reconciliation
    - Lossless text normalization & DocumentSegment location map
         │
         ▼

@@ -102,6 +102,8 @@ print(result.status, result.validation.status)
 print(result.to_json(indent=2))
 ```
 
+In-memory inputs (`bytes`/`bytearray`/`memoryview`, plain text, and binary streams) are supported without writing temporary files via `DocumentInput.from_bytes(...)`, `DocumentInput.from_text(...)`, `DocumentInput.from_stream(...)`, and `DocumentInput.from_path(...)` across both `extract(...)` and `extract_batch(...)`; see [examples/in_memory_extraction_example.py](examples/in_memory_extraction_example.py).
+
 By default, `OpenAICompatibleLLMStrategy` enables strict schema-guided structured outputs with automatic `json_object` compatibility fallback, bounded exponential-backoff retries (`max_retries=2`, honoring `Retry-After`), a `120,000`-character input budget (`overflow_policy="reject"`), and embedded delimiter neutralization against prompt injection. See [Configuration & Security](docs/configuration.md) and [examples/hardened_llm_strategy_example.py](examples/hardened_llm_strategy_example.py) to customize these policies.
 
 For offline deterministic tests or custom extraction logic without external API keys, see `DeterministicTestStrategy` and [examples/](examples/).
@@ -115,6 +117,9 @@ export STRUCTA_MAESTRO_API_KEY="your-api-key"
 
 # Single document -> Canonical Output Record Contract v1.0 JSON
 structa-maestro extract invoice.pdf --schema invoice_schema.json --pretty
+
+# Pipe binary or text document via stdin ('-') without temporary files
+cat invoice.pdf | structa-maestro extract - --schema invoice_schema.json --filename invoice.pdf
 
 # Folder / multi-file batch -> Contract v1.0 JSON Lines (JSONL) + optional summary
 structa-maestro extract-batch ./invoices/ --schema invoice_schema.json \

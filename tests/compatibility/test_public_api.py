@@ -31,6 +31,8 @@ def test_public_api_exports_and_version() -> None:
         "SourceLocation",
         "ValidationOutcome",
         "DiagnosticIssue",
+        "DocumentInput",
+        "DocumentInputKind",
         "DocumentLimits",
         "SecretValue",
         "ExtractionStrategy",

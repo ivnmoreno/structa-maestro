@@ -235,3 +235,133 @@ def test_concurrent_extractions_remain_isolated_with_unique_ids(tmp_path: Path) 
         else:
             assert val == "BETA-SECRET"
             assert prov_doc_id == f"doc-b-{idx}"
+
+
+@pytest.mark.security
+def test_in_memory_stream_dos_zip_bomb_path_traversal_and_concurrent_secret_isolation(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    from tests.conftest import create_zip_bomb_docx
+
+    from structa_maestro import (
+        BatchOptions,
+        ConfigurationError,
+        DocumentInput,
+        DocumentLimits,
+        RetryPolicy,
+        extract_batch,
+    )
+
+    schema = {
+        "schema_id": "sec-inmem",
+        "schema_version": "1.0",
+        "fields": {"account": {"type": "string", "required": True}},
+    }
+
+    # 1. Adversarial unbounded stream stops after max_file_bytes + 1 bytes
+    class _InfiniteStream:
+        closed = False
+
+        def __init__(self) -> None:
+            self.read_bytes = 0
+
+        def readable(self) -> bool:
+            return True
+
+        def read(self, size: int = -1) -> bytes:
+            n = 4096 if size < 0 else min(4096, size)
+            self.read_bytes += n
+            return b"Z" * n
+
+    inf = _InfiniteStream()
+    res_inf = extract(
+        DocumentInput.from_stream(inf, filename="../../etc/huge.txt"),  # type: ignore[arg-type]
+        schema,
+        strategy=DeterministicTestStrategy(StrategyOutput(records=())),
+        limits=DocumentLimits(max_file_bytes=1024),
+    )
+    assert res_inf.status == ProcessingStatus.FAILED
+    assert any(e.code == "resource_limit_exceeded" for e in res_inf.errors)
+    assert inf.read_bytes == 1025
+    assert res_inf.source is not None
+    assert res_inf.source.filename == "huge.txt"
+    assert "etc" not in res_inf.to_json()
+
+    # 2. ZIP-bomb DOCX supplied as raw bytes -> resource_limit_exceeded
+    bomb_bytes = create_zip_bomb_docx(
+        tmp_path / "bomb.docx", uncompressed_bytes=2 * 1024 * 1024
+    ).read_bytes()
+    res_bomb = extract(
+        DocumentInput.from_bytes(bomb_bytes, filename=r"C:\secret\dir\bomb.docx"),
+        schema,
+        strategy=DeterministicTestStrategy(StrategyOutput(records=())),
+        limits=DocumentLimits(max_file_bytes=5 * 1024 * 1024, max_decompressed_bytes=512 * 1024),
+    )
+    assert res_bomb.status == ProcessingStatus.FAILED
+    assert any(e.code == "resource_limit_exceeded" for e in res_bomb.errors)
+    assert res_bomb.source is not None
+    assert res_bomb.source.filename == "bomb.docx"
+    assert "C:" not in res_bomb.to_json()
+
+    # 3. Null-byte filename fails eagerly
+    with pytest.raises(ConfigurationError):
+        DocumentInput.from_text("hello", filename="bad\x00.txt")
+
+    # 4. Concurrent in-memory batch failure never leaks secrets, raw text, or host prefixes
+    secret_key = "sk-inmem-batch-secret-999999"
+    markers = [f"CONFIDENTIAL-MEM-{i:02d}" for i in range(4)]
+    inputs = [
+        DocumentInput.from_text(f"Account: {markers[0]}\n", filename="/private/a/doc0.txt"),
+        DocumentInput.from_bytes(
+            f"Account: {markers[1]}\n".encode(), filename=r"C:\private\b\doc1.txt"
+        ),
+        DocumentInput.from_stream(
+            __import__("io").BytesIO(f"Account: {markers[2]}\n".encode()),
+            filename="../../private/c/doc2.txt",
+        ),
+        DocumentInput.from_text(f"Account: {markers[3]}\n", filename="doc3.txt"),
+    ]
+    for idx, inp in enumerate(inputs):
+        assert markers[idx] not in repr(inp)
+        assert "private" not in repr(inp)
+
+    def _fail_provider(_req: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError(f"Failed with Bearer {secret_key} echoing {markers[0]}")
+
+    transport = httpx.MockTransport(_fail_provider)
+    with (
+        caplog.at_level(logging.DEBUG, logger="structa_maestro"),
+        httpx.Client(transport=transport) as client,
+    ):
+        strategy = OpenAICompatibleLLMStrategy(
+            model="gpt-4o-mini",
+            api_key=secret_key,
+            http_client=client,
+            retry_policy=RetryPolicy(max_retries=1),
+            sleep_fn=lambda _s: None,
+        )
+        batch = extract_batch(
+            inputs,
+            schema,
+            strategy=strategy,
+            options=BatchOptions(max_workers=4),
+        )
+
+    jsonl = batch.to_jsonl()
+    summary_json = batch.summary.to_json()
+    assert batch.summary.failed_count == 4
+    assert secret_key not in jsonl
+    assert secret_key not in summary_json
+    assert secret_key not in caplog.text
+    assert "private" not in jsonl
+    assert "private" not in summary_json
+    for tok in markers:
+        assert tok not in jsonl
+        assert tok not in summary_json
+        assert tok not in caplog.text
+    assert [r.source.filename if r.source else None for r in batch.results] == [
+        "doc0.txt",
+        "doc1.txt",
+        "doc2.txt",
+        "doc3.txt",
+    ]
