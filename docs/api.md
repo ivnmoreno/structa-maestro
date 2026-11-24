@@ -4,17 +4,17 @@ All stable public symbols are exported from the top-level `structa_maestro` pack
 
 ## Library Entry Points
 
-- `ExtractionEngine(strategy: ExtractionStrategy | AsyncExtractionStrategy, *, limits=None)`
-  - `.extract(document: str | Path | DocumentInput, schema: ExtractionSchema | Mapping[str, Any], *, document_id: str | None = None) -> ExtractionResult`
-  - `.extract_batch(documents: Sequence[str | Path | BatchDocumentInput | DocumentInput], schema: ExtractionSchema | Mapping[str, Any], *, options: BatchOptions | None = None) -> BatchExtractionResult`
-  - `async .aextract(document: str | Path | DocumentInput, schema: ExtractionSchema | Mapping[str, Any], *, document_id: str | None = None) -> ExtractionResult`
-  - `async .aextract_batch(documents: Sequence[str | Path | BatchDocumentInput | DocumentInput], schema: ExtractionSchema | Mapping[str, Any], *, options: BatchOptions | None = None) -> BatchExtractionResult`
-  - Calling synchronous `.extract(...)` / `.extract_batch(...)` with an async-only strategy raises `ConfigurationError` eagerly. `.aextract(...)` / `.aextract_batch(...)` accept both native `AsyncExtractionStrategy` and synchronous `ExtractionStrategy` (offloaded via `asyncio.to_thread`), prefer native `aextract_raw` on dual-protocol strategies, and propagate `asyncio.CancelledError` cleanly (cancelling in-flight batch tasks).
+- `ExtractionEngine(strategy: ExtractionStrategy | AsyncExtractionStrategy, *, limits=None, result_builder=None, observers=None)`
+  - `.extract(document: str | Path | DocumentInput, schema: ExtractionSchema | Mapping[str, Any], *, document_id: str | None = None, observers: Sequence[ExtractionObserver] | None = None) -> ExtractionResult`
+  - `.extract_batch(documents: Sequence[str | Path | BatchDocumentInput | DocumentInput], schema: ExtractionSchema | Mapping[str, Any], *, options: BatchOptions | None = None, observers: Sequence[ExtractionObserver] | None = None) -> BatchExtractionResult`
+  - `async .aextract(document: str | Path | DocumentInput, schema: ExtractionSchema | Mapping[str, Any], *, document_id: str | None = None, observers: Sequence[ExtractionObserver | AsyncExtractionObserver] | None = None) -> ExtractionResult`
+  - `async .aextract_batch(documents: Sequence[str | Path | BatchDocumentInput | DocumentInput], schema: ExtractionSchema | Mapping[str, Any], *, options: BatchOptions | None = None, observers: Sequence[ExtractionObserver | AsyncExtractionObserver] | None = None) -> BatchExtractionResult`
+  - Calling synchronous `.extract(...)` / `.extract_batch(...)` with an async-only strategy or async-only observer raises `ConfigurationError` eagerly. `.aextract(...)` / `.aextract_batch(...)` accept both native `AsyncExtractionStrategy` and synchronous `ExtractionStrategy` (offloaded via `asyncio.to_thread`), prefer native `aextract_raw` / `aon_event` on dual-protocol implementations, and propagate `asyncio.CancelledError` cleanly (cancelling in-flight batch tasks).
 - Functional helpers:
-  - `extract(document, schema, *, strategy, limits=None, document_id=None) -> ExtractionResult`
-  - `extract_batch(documents, schema, *, strategy, limits=None, options=None) -> BatchExtractionResult`
-  - `async aextract(document, schema, *, strategy, limits=None, document_id=None) -> ExtractionResult`
-  - `async aextract_batch(documents, schema, *, strategy, limits=None, options=None) -> BatchExtractionResult`
+  - `extract(document, schema, *, strategy, limits=None, document_id=None, observers=None) -> ExtractionResult`
+  - `extract_batch(documents, schema, *, strategy, limits=None, options=None, observers=None) -> BatchExtractionResult`
+  - `async aextract(document, schema, *, strategy, limits=None, document_id=None, observers=None) -> ExtractionResult`
+  - `async aextract_batch(documents, schema, *, strategy, limits=None, options=None, observers=None) -> BatchExtractionResult`
 - See [examples/async_extraction_example.py](../examples/async_extraction_example.py) for an offline runnable async single + bounded-concurrency batch example.
 - In-memory input descriptors: `DocumentInput` (`DocumentInputKind`: `path`, `bytes`, `text`, `stream`) constructed via `DocumentInput.from_path(path, *, filename=None, document_id=None, media_type=None)`, `DocumentInput.from_bytes(content, *, filename=None, document_id=None, media_type=None)`, `DocumentInput.from_text(text, *, filename=None, document_id=None, media_type=None)`, and `DocumentInput.from_stream(stream, *, filename=None, document_id=None, media_type=None)`. Filenames are sanitized to basename-only (null bytes fail eagerly); binary streams are read incrementally up to `max_file_bytes + 1` bytes without creating temporary files. See [examples/in_memory_extraction_example.py](../examples/in_memory_extraction_example.py).
 - Batch models: `BatchDocumentInput(path, document_id=None)`, `BatchOptions(max_workers=1, fail_fast=False)` (`1 <= max_workers <= 32`), `BatchSummary` (`to_dict()`, `to_json()`), `BatchExtractionResult` (`to_jsonl()`, `to_dict()`, `to_json()`). See [examples/batch_extraction_example.py](../examples/batch_extraction_example.py).
@@ -86,6 +86,25 @@ All stable public symbols are exported from the top-level `structa_maestro` pack
 - `CompiledOutputSchema` & `compile_extraction_output_schema(schema)`: deterministic closed JSON Schema compiler used by strict structured-output mode.
 - `DeterministicTestStrategy(handler_or_output, name="deterministic-test")` and `AsyncDeterministicTestStrategy(async_handler_or_output, name="async-deterministic-test")`.
 
+## Observability & Privacy-Safe Telemetry
+
+All telemetry models and observer hooks are strictly decoupled from Canonical Output Record Contract `v1.0` and carry zero raw document text, extracted field values, provenance excerpts, host directory paths, or credentials:
+
+- **Observer Protocols**:
+  - `ExtractionObserver` (Protocol): `on_event(self, event: ExtractionEvent) -> None`
+  - `AsyncExtractionObserver` (Protocol): `async def aon_event(self, event: ExtractionEvent) -> None`
+  - Engine-level and call-level observers compose deterministically (`(*engine_observers, *call_observers)`) without mutating engine state. Observer `Exception`s are caught and logged safely (scrubbed) without affecting extraction results or `fail_fast`; `asyncio.CancelledError` propagates immediately.
+- **Built-In Zero-Dependency Observers**:
+  - `InMemoryTelemetryObserver`: thread-safe & asyncio-safe collector exposing `.events() -> tuple[ExtractionEvent, ...]`, `.summary() -> TelemetrySummary`, and `.reset()`.
+  - `StructuredLoggingObserver(logger_name="structa_maestro.telemetry", level=logging.INFO)`: emits compact privacy-safe JSON log records via stdlib `logging`.
+- **Immutable Telemetry Models**:
+  - `ExtractionEventKind`: `extraction_started`, `document_loaded`, `strategy_completed`, `extraction_completed`, `batch_started`, `batch_item_completed`, `batch_completed`.
+  - `ExtractionEvent` (`to_dict()`, `to_json()`): unified correlated event envelope (`extraction_id`, optional `batch_id`, `document_id`, basename-only `filename`, `media_type`, schema/strategy IDs, `elapsed_ms`, statuses, counts, sanitized diagnostic `code` tuples, `stage_timing`, `stage_timings`, `strategy_telemetry`, `batch_progress`).
+  - `StageTiming(stage, elapsed_ms, succeeded)` & `StageTimingSummary(stage, count, total_ms, mean_ms, p50_ms, max_ms)` (`p50_ms` uses exact `statistics.median`).
+  - `TokenUsage(prompt_tokens, completion_tokens, total_tokens)` & `StrategyTelemetry(attempts, retry_count, structured_output_mode_used, fallback_used, truncated, token_usage)` (populated cumulatively across attempts by `OpenAICompatibleLLMStrategy` and `AsyncOpenAICompatibleLLMStrategy`, leaving unavailable counts as `None`).
+  - `BatchProgress` & `TelemetrySummary` (`to_dict()`, `to_json()`).
+- See [examples/observability_telemetry_example.py](../examples/observability_telemetry_example.py) for an offline runnable walkthrough.
+
 ## Canonical Output & Serialization
 
 - `ExtractionResult.to_dict() -> dict[str, Any]`
@@ -140,6 +159,7 @@ structa-maestro extract <document|-> --schema <schema.json>
   [--max-retries 2]
   [--max-input-chars 120000|none]
   [--overflow-policy reject|truncate]
+  [--telemetry-json <telemetry.json>]
   [--pretty]
 
 structa-maestro extract-batch <path_or_dir> [<path_or_dir> ...] --schema <schema.json>
@@ -148,7 +168,8 @@ structa-maestro extract-batch <path_or_dir> [<path_or_dir> ...] --schema <schema
   [--fail-fast]
   [--output <results.jsonl>]
   [--summary-json <summary.json>]
+  [--telemetry-json <telemetry.json>]
   [all common --model / --base-url / --api-key-env / limit / LLM reliability flags]
 ```
 
-Exit codes: `0` (all `completed` + `valid`), `2` (any `partial`/`failed`/`invalid` canonical result emitted or `--fail-fast` stopped early), `1` (CLI usage, empty discovery, schema, or configuration error).
+Exit codes: `0` (all `completed` + `valid`), `2` (any `partial`/`failed`/`invalid` canonical result emitted or `--fail-fast` stopped early), `1` (CLI usage, empty discovery, schema, configuration, or file write error). `--telemetry-json <path>` is written on both exit `0` and exit `2` (skipped on eager exit `1` errors) while keeping `stdout` / `--output` strictly Contract `v1.0`.

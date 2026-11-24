@@ -189,6 +189,31 @@ async with AsyncOpenAICompatibleLLMStrategy(
 - Blocking document parsing and synchronous strategies are automatically offloaded via `asyncio.to_thread`, and external `asyncio.CancelledError` propagates cleanly while cancelling in-flight batch tasks.
 - See [examples/async_extraction_example.py](examples/async_extraction_example.py) and [Configuration & Security](docs/configuration.md) for shared `httpx.AsyncClient` / FastAPI lifespan guidance.
 
+### Privacy-Safe Observability, Stage Timings & Token Accounting
+
+Attach zero-dependency observers (`InMemoryTelemetryObserver`, `StructuredLoggingObserver`, or custom `ExtractionObserver` / `AsyncExtractionObserver` adapters) to any sync or async single/batch call to measure per-stage durations, live batch progress, and cumulative LLM token/retry/fallback usage—without modifying Contract `v1.0` or exposing raw text, extracted values, host paths, or secrets:
+
+```python
+from structa_maestro import (
+    BatchOptions,
+    InMemoryTelemetryObserver,
+    aextract_batch,
+)
+
+telemetry = InMemoryTelemetryObserver()
+batch = await aextract_batch(
+    docs,
+    schema,
+    strategy=strategy,
+    options=BatchOptions(max_workers=4),
+    observers=[telemetry],
+)
+print(telemetry.summary().to_json(indent=2))
+```
+
+- Observer errors are strictly fault-isolated (never failing extractions or triggering `fail_fast`), while `asyncio.CancelledError` always propagates cleanly.
+- See [examples/observability_telemetry_example.py](examples/observability_telemetry_example.py), [Public API & CLI Reference](docs/api.md), and [Configuration & Security](docs/configuration.md) for OpenTelemetry and Prometheus adapter patterns.
+
 By default, `OpenAICompatibleLLMStrategy` enables strict schema-guided structured outputs with automatic `json_object` compatibility fallback, bounded exponential-backoff retries (`max_retries=2`, honoring `Retry-After`), a `120,000`-character input budget (`overflow_policy="reject"`), and embedded delimiter neutralization against prompt injection. See [Configuration & Security](docs/configuration.md) and [examples/hardened_llm_strategy_example.py](examples/hardened_llm_strategy_example.py) to customize these policies.
 
 For offline deterministic tests or custom extraction logic without external API keys, see `DeterministicTestStrategy` and [examples/](examples/).
@@ -206,12 +231,13 @@ structa-maestro extract invoice.pdf --schema invoice_schema.json --pretty
 # Pipe binary or text document via stdin ('-') without temporary files
 cat invoice.pdf | structa-maestro extract - --schema invoice_schema.json --filename invoice.pdf
 
-# Folder / multi-file batch -> Contract v1.0 JSON Lines (JSONL) + optional summary
+# Folder / multi-file batch -> Contract v1.0 JSON Lines (JSONL) + optional summary & telemetry
 structa-maestro extract-batch ./invoices/ --schema invoice_schema.json \
-  --recursive --max-workers 4 --output results.jsonl --summary-json summary.json
+  --recursive --max-workers 4 --output results.jsonl \
+  --summary-json summary.json --telemetry-json telemetry.json
 ```
 
-- Supports optional reliability controls (`--structured-output-mode`, `--max-retries`, `--max-input-chars`, `--overflow-policy`) mirroring `OpenAICompatibleLLMStrategy`'s strict schema-guided output, bounded retries, and input-budgeting policies.
+- Supports optional reliability controls (`--structured-output-mode`, `--max-retries`, `--max-input-chars`, `--overflow-policy`) and optional `--telemetry-json <path>` (on both `extract` and `extract-batch`) to write a privacy-safe `TelemetrySummary` JSON file while keeping stdout purely Contract `v1.0`.
 - Programmatic stateless batch extraction is available via `extract_batch(...)` and `ExtractionEngine.extract_batch(...)` with `BatchOptions(max_workers=..., fail_fast=...)`; see [examples/batch_extraction_example.py](examples/batch_extraction_example.py).
 - Emits the exact **Canonical Output Record Contract v1.0** JSON on `stdout` (or `--output <path>`).
 - Exit codes: `0` (all `completed` + `valid`), `2` (any `partial`/`failed`/`invalid` canonical result or early `--fail-fast` stop), `1` (invalid CLI args, empty discovery, schema, or configuration error).

@@ -541,3 +541,121 @@ def test_input_budget_reject_truncate_and_disabled(
     )
     assert res_unbounded.status == ProcessingStatus.COMPLETED
     assert not any(w.code == "input_truncated" for w in res_unbounded.warnings)
+
+
+def test_sync_llm_strategy_populates_strategy_telemetry_for_usage_retries_fallback_and_budget(
+    tmp_path: Path,
+    invoice_schema_dict: dict[str, Any],
+) -> None:
+    from structa_maestro import ExtractionEventKind, InMemoryTelemetryObserver, TokenUsage
+
+    doc = tmp_path / "telemetry_inv.txt"
+    doc.write_text(
+        "Invoice Number: INV-2026-001\nVendor: Acme Industrial Supply Ltd.\n"
+        "Issue Date: 2026-03-15\nTotal Amount: 1250.50\nCurrency: USD\n",
+        encoding="utf-8",
+    )
+
+    # 1. Malformed JSON retry accumulates token usage cumulatively across attempts
+    retry_attempt = 0
+
+    def _malformed_then_ok(_req: httpx.Request) -> httpx.Response:
+        nonlocal retry_attempt
+        retry_attempt += 1
+        if retry_attempt == 1:
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [{"message": {"content": "{not-json"}, "finish_reason": "stop"}],
+                    "usage": {"prompt_tokens": 110, "completion_tokens": 15, "total_tokens": 125},
+                },
+            )
+        payload = _ok_invoice_payload()
+        payload["usage"] = {"prompt_tokens": 110, "completion_tokens": 45, "total_tokens": 155}
+        return httpx.Response(200, json=payload)
+
+    obs1 = InMemoryTelemetryObserver()
+    with httpx.Client(transport=httpx.MockTransport(_malformed_then_ok)) as client:
+        strat1 = OpenAICompatibleLLMStrategy(
+            model="gpt-4o-mini",
+            api_key="sk-tel-sync-123456",
+            http_client=client,
+            retry_policy=RetryPolicy(max_retries=2, jitter=False, initial_backoff_seconds=0.01),
+            sleep_fn=lambda _d: None,
+        )
+        res1 = extract(doc, invoice_schema_dict, strategy=strat1, observers=[obs1])
+    assert res1.status == ProcessingStatus.COMPLETED
+    strat_ev = [e for e in obs1.events() if e.event_kind == ExtractionEventKind.STRATEGY_COMPLETED]
+    assert len(strat_ev) == 1
+    tel1 = strat_ev[0].strategy_telemetry
+    assert tel1 is not None
+    assert tel1.attempts == 2
+    assert tel1.retry_count == 1
+    assert tel1.structured_output_mode_used == "json_schema"
+    assert tel1.fallback_used is False
+    assert tel1.truncated is False
+    assert tel1.token_usage == TokenUsage(prompt_tokens=220, completion_tokens=60, total_tokens=280)
+
+    # 2. Fallback to json_object + omitted usage -> token_usage is None (never fabricated 0)
+    fb_attempt = 0
+
+    def _fallback_no_usage(_req: httpx.Request) -> httpx.Response:
+        nonlocal fb_attempt
+        fb_attempt += 1
+        if fb_attempt == 1:
+            return httpx.Response(400, text='{"error":"json_schema response_format not supported"}')
+        return httpx.Response(200, json=_ok_invoice_payload())
+
+    obs2 = InMemoryTelemetryObserver()
+    with httpx.Client(transport=httpx.MockTransport(_fallback_no_usage)) as client:
+        strat2 = OpenAICompatibleLLMStrategy(
+            model="gpt-4o-mini",
+            api_key="sk-tel-sync-123456",
+            http_client=client,
+        )
+        extract(doc, invoice_schema_dict, strategy=strat2, observers=[obs2])
+    tel2 = next(
+        e for e in obs2.events() if e.event_kind == ExtractionEventKind.STRATEGY_COMPLETED
+    ).strategy_telemetry
+    assert tel2 is not None
+    assert tel2.attempts == 2
+    assert tel2.retry_count == 0
+    assert tel2.structured_output_mode_used == "json_object"
+    assert tel2.fallback_used is True
+    assert tel2.token_usage is None
+    assert obs2.summary().prompt_tokens is None
+    assert obs2.summary().usage_reported_count == 0
+
+    # 3. Pre-network REJECT -> attempts=0, mode=None; TRUNCATE -> truncated=True, attempts=1
+    obs3 = InMemoryTelemetryObserver()
+    with httpx.Client(
+        transport=httpx.MockTransport(lambda _r: httpx.Response(200, json=_ok_invoice_payload()))
+    ) as client:
+        strat_rej = OpenAICompatibleLLMStrategy(
+            model="gpt-4o-mini",
+            api_key="sk-tel-sync-123456",
+            http_client=client,
+            input_budget=InputBudgetPolicy(
+                max_input_chars=20,
+                overflow_policy=InputBudgetOverflowPolicy.REJECT,
+            ),
+        )
+        extract(doc, invoice_schema_dict, strategy=strat_rej, observers=[obs3])
+        strat_trunc = OpenAICompatibleLLMStrategy(
+            model="gpt-4o-mini",
+            api_key="sk-tel-sync-123456",
+            http_client=client,
+            input_budget=InputBudgetPolicy(
+                max_input_chars=80,
+                overflow_policy=InputBudgetOverflowPolicy.TRUNCATE,
+            ),
+        )
+        extract(doc, invoice_schema_dict, strategy=strat_trunc, observers=[obs3])
+    strat_evs = [e for e in obs3.events() if e.event_kind == ExtractionEventKind.STRATEGY_COMPLETED]
+    assert strat_evs[0].strategy_telemetry is not None
+    assert strat_evs[0].strategy_telemetry.attempts == 0
+    assert strat_evs[0].strategy_telemetry.structured_output_mode_used is None
+    assert strat_evs[1].strategy_telemetry is not None
+    assert strat_evs[1].strategy_telemetry.attempts == 1
+    assert strat_evs[1].strategy_telemetry.truncated is True
+    assert obs3.summary().truncated_count == 1

@@ -49,8 +49,12 @@ class ResultBuilder:
         source: SourceMetadata | None,
         errors: list[DiagnosticIssue],
         warnings: list[DiagnosticIssue] | None = None,
+        extraction_id: str | None = None,
     ) -> ExtractionResult:
         """Build a canonical failed result when processing fails prior to producing records."""
+        extra_kwargs: dict[str, Any] = {}
+        if extraction_id is not None:
+            extra_kwargs["extraction_id"] = extraction_id
         return ExtractionResult(
             status=ProcessingStatus.FAILED,
             source=source,
@@ -62,6 +66,7 @@ class ResultBuilder:
             validation=ValidationOutcome(status=ValidationStatus.NOT_VALIDATED),
             errors=list(errors),
             warnings=list(warnings or ()),
+            **extra_kwargs,
         )
 
     def build(
@@ -71,6 +76,7 @@ class ResultBuilder:
         schema: ExtractionSchema,
         strategy_output: StrategyOutput,
         document_warnings: list[DiagnosticIssue] | None = None,
+        extraction_id: str | None = None,
     ) -> ExtractionResult:
         """Assemble full canonical ExtractionResult from prepared document and strategy output."""
         result_errors = list(strategy_output.errors)
@@ -90,6 +96,7 @@ class ResultBuilder:
                     )
                 ],
                 warnings=result_warnings,
+                extraction_id=extraction_id,
             )
 
         built_records: list[ExtractedRecord] = []
@@ -132,6 +139,10 @@ class ResultBuilder:
         else:
             overall_status = ProcessingStatus.COMPLETED
 
+        extra_kwargs: dict[str, Any] = {}
+        if extraction_id is not None:
+            extra_kwargs["extraction_id"] = extraction_id
+
         return ExtractionResult(
             status=overall_status,
             source=document.source,
@@ -143,6 +154,7 @@ class ResultBuilder:
             validation=overall_validation,
             errors=result_errors,
             warnings=result_warnings,
+            **extra_kwargs,
         )
 
     def _build_record(

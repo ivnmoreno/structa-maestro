@@ -9,6 +9,7 @@ from structa_maestro.contracts.enums import FieldPresence
 from structa_maestro.contracts.models import DiagnosticIssue
 from structa_maestro.documents.models import PreparedDocument
 from structa_maestro.schema.models import ExtractionSchema
+from structa_maestro.telemetry import StrategyTelemetry
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,6 +62,7 @@ class StrategyOutput:
     errors: tuple[DiagnosticIssue, ...] = field(default_factory=tuple)
     warnings: tuple[DiagnosticIssue, ...] = field(default_factory=tuple)
     default_confidence_method: str = "extraction-assessment"
+    telemetry: StrategyTelemetry | None = None
 
 
 @runtime_checkable

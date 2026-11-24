@@ -51,6 +51,12 @@ from structa_maestro.strategies.schema_compiler import (
     StrictSchemaIncompatibilityError,
     compile_extraction_output_schema,
 )
+from structa_maestro.telemetry import (
+    StrategyTelemetry,
+    TokenUsage,
+    merge_token_usage,
+    parse_openai_token_usage,
+)
 
 _logger = get_logger(__name__)
 
@@ -122,6 +128,8 @@ class _PreparedLLMCall:
     warnings: list[DiagnosticIssue]
     deadline: float | None
     secret_raw: str
+    attempts: int = 0
+    token_usage: TokenUsage | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -258,6 +266,14 @@ class _BaseOpenAICompatibleLLMStrategy:
                     "input_budget_exceeded",
                     f"Prepared document length ({total_chars} chars) exceeds configured "
                     f"max_input_chars ({self._input_budget.max_input_chars}).",
+                    telemetry=StrategyTelemetry(
+                        attempts=0,
+                        retry_count=0,
+                        structured_output_mode_used=None,
+                        fallback_used=False,
+                        truncated=False,
+                        token_usage=None,
+                    ),
                 )
             input_truncated = True
             strategy_warnings.append(
@@ -288,6 +304,14 @@ class _BaseOpenAICompatibleLLMStrategy:
                         "ExtractionSchema allows additional fields and cannot be compiled "
                         "in strict structured-output mode.",
                         warnings=strategy_warnings,
+                        telemetry=StrategyTelemetry(
+                            attempts=0,
+                            retry_count=0,
+                            structured_output_mode_used=None,
+                            fallback_used=False,
+                            truncated=input_truncated,
+                            token_usage=None,
+                        ),
                     )
                 fallback_used = True
                 response_format = {"type": "json_object"}
@@ -351,6 +375,22 @@ class _BaseOpenAICompatibleLLMStrategy:
             rng=self._rng_fn,
         )
 
+    @staticmethod
+    def _build_telemetry(
+        ctx: _PreparedLLMCall,
+        *,
+        transient_retries: int,
+    ) -> StrategyTelemetry:
+        mode_used = str(ctx.response_format.get("type")) if ctx.attempts > 0 else None
+        return StrategyTelemetry(
+            attempts=ctx.attempts,
+            retry_count=transient_retries,
+            structured_output_mode_used=mode_used,
+            fallback_used=ctx.fallback_used,
+            truncated=ctx.input_truncated,
+            token_usage=ctx.token_usage,
+        )
+
     def _evaluate_response(
         self,
         *,
@@ -359,6 +399,7 @@ class _BaseOpenAICompatibleLLMStrategy:
         ctx: _PreparedLLMCall,
         transient_retries: int,
         can_retry_more: bool,
+        record_usage: bool = True,
     ) -> _ResponseDecision:
         status_code = response.status_code
 
@@ -393,6 +434,7 @@ class _BaseOpenAICompatibleLLMStrategy:
                     "provider_auth_error",
                     f"Model provider rejected authentication (HTTP {status_code}).",
                     warnings=ctx.warnings,
+                    telemetry=self._build_telemetry(ctx, transient_retries=transient_retries),
                 ),
             )
 
@@ -401,6 +443,7 @@ class _BaseOpenAICompatibleLLMStrategy:
             retry_after = parse_retry_after(response.headers.get("Retry-After"))
             if can_retry_more:
                 return _ResponseDecision(action="retry", retry_after=retry_after)
+            telemetry = self._build_telemetry(ctx, transient_retries=transient_retries)
             if status_code == 408:
                 return _ResponseDecision(
                     action="return",
@@ -408,6 +451,7 @@ class _BaseOpenAICompatibleLLMStrategy:
                         "provider_timeout",
                         "Model provider request timed out (HTTP 408).",
                         warnings=ctx.warnings,
+                        telemetry=telemetry,
                     ),
                 )
             if status_code == 429:
@@ -417,6 +461,7 @@ class _BaseOpenAICompatibleLLMStrategy:
                         "provider_rate_limited",
                         "Model provider rate limit exceeded (HTTP 429).",
                         warnings=ctx.warnings,
+                        telemetry=telemetry,
                     ),
                 )
             return _ResponseDecision(
@@ -425,6 +470,7 @@ class _BaseOpenAICompatibleLLMStrategy:
                     "provider_unavailable",
                     f"Model provider unavailable (HTTP {status_code}).",
                     warnings=ctx.warnings,
+                    telemetry=telemetry,
                 ),
             )
 
@@ -435,6 +481,7 @@ class _BaseOpenAICompatibleLLMStrategy:
                     "provider_request_error",
                     f"Model provider rejected request (HTTP {status_code}).",
                     warnings=ctx.warnings,
+                    telemetry=self._build_telemetry(ctx, transient_retries=transient_retries),
                 ),
             )
 
@@ -449,8 +496,12 @@ class _BaseOpenAICompatibleLLMStrategy:
                     "malformed_provider_response",
                     "Model provider returned non-JSON HTTP response body.",
                     warnings=ctx.warnings,
+                    telemetry=self._build_telemetry(ctx, transient_retries=transient_retries),
                 ),
             )
+
+        if record_usage:
+            ctx.token_usage = merge_token_usage(ctx.token_usage, parse_openai_token_usage(body))
 
         parsed_output = self._parse_provider_body(body, schema)
         if (
@@ -485,6 +536,7 @@ class _BaseOpenAICompatibleLLMStrategy:
                 errors=parsed_output.errors,
                 warnings=tuple(combined_warnings),
                 default_confidence_method=parsed_output.default_confidence_method,
+                telemetry=self._build_telemetry(ctx, transient_retries=transient_retries),
             ),
         )
 
@@ -666,6 +718,7 @@ class _BaseOpenAICompatibleLLMStrategy:
         message: str,
         *,
         warnings: list[DiagnosticIssue] | None = None,
+        telemetry: StrategyTelemetry | None = None,
     ) -> StrategyOutput:
         return StrategyOutput(
             records=(),
@@ -680,6 +733,7 @@ class _BaseOpenAICompatibleLLMStrategy:
             ),
             warnings=tuple(warnings) if warnings else (),
             default_confidence_method="llm-self-assessment",
+            telemetry=telemetry,
         )
 
 
@@ -742,6 +796,7 @@ class OpenAICompatibleLLMStrategy(_BaseOpenAICompatibleLLMStrategy):
                     "provider_timeout",
                     "Extraction exceeded configured max_total_seconds deadline.",
                     warnings=ctx.warnings,
+                    telemetry=self._build_telemetry(ctx, transient_retries=transient_retries),
                 )
 
             req_timeout = (
@@ -756,6 +811,7 @@ class OpenAICompatibleLLMStrategy(_BaseOpenAICompatibleLLMStrategy):
                 "messages": ctx.messages,
             }
 
+            ctx.attempts += 1
             try:
                 response = self._post_request(
                     endpoint=ctx.endpoint,
@@ -775,6 +831,7 @@ class OpenAICompatibleLLMStrategy(_BaseOpenAICompatibleLLMStrategy):
                     "provider_timeout",
                     "Model provider request timed out.",
                     warnings=ctx.warnings,
+                    telemetry=self._build_telemetry(ctx, transient_retries=transient_retries),
                 )
             except httpx.HTTPError as exc:
                 if self._can_retry(
@@ -792,6 +849,7 @@ class OpenAICompatibleLLMStrategy(_BaseOpenAICompatibleLLMStrategy):
                     "provider_connection_error",
                     safe,
                     warnings=ctx.warnings,
+                    telemetry=self._build_telemetry(ctx, transient_retries=transient_retries),
                 )
 
             decision = self._evaluate_response(
@@ -811,20 +869,26 @@ class OpenAICompatibleLLMStrategy(_BaseOpenAICompatibleLLMStrategy):
                 ):
                     transient_retries += 1
                     continue
-                # Budget/deadline prevented retry; evaluate final terminal error
+                # Budget/deadline prevented retry; evaluate final terminal error without recounting
                 terminal = self._evaluate_response(
                     response=response,
                     schema=schema,
                     ctx=ctx,
                     transient_retries=transient_retries,
                     can_retry_more=False,
+                    record_usage=False,
                 )
                 return terminal.output or self._failed_output(
                     "provider_timeout",
                     "Extraction exceeded configured max_total_seconds deadline.",
                     warnings=ctx.warnings,
+                    telemetry=self._build_telemetry(ctx, transient_retries=transient_retries),
                 )
-            return decision.output or self._failed_output("extraction_error", "Empty response.")
+            return decision.output or self._failed_output(
+                "extraction_error",
+                "Empty response.",
+                telemetry=self._build_telemetry(ctx, transient_retries=transient_retries),
+            )
 
     def _post_request(
         self,
@@ -957,6 +1021,7 @@ class AsyncOpenAICompatibleLLMStrategy(_BaseOpenAICompatibleLLMStrategy):
                     "provider_timeout",
                     "Extraction exceeded configured max_total_seconds deadline.",
                     warnings=ctx.warnings,
+                    telemetry=self._build_telemetry(ctx, transient_retries=transient_retries),
                 )
 
             req_timeout = (
@@ -971,6 +1036,7 @@ class AsyncOpenAICompatibleLLMStrategy(_BaseOpenAICompatibleLLMStrategy):
                 "messages": ctx.messages,
             }
 
+            ctx.attempts += 1
             try:
                 response = await self._apost_request(
                     endpoint=ctx.endpoint,
@@ -990,6 +1056,7 @@ class AsyncOpenAICompatibleLLMStrategy(_BaseOpenAICompatibleLLMStrategy):
                     "provider_timeout",
                     "Model provider request timed out.",
                     warnings=ctx.warnings,
+                    telemetry=self._build_telemetry(ctx, transient_retries=transient_retries),
                 )
             except httpx.HTTPError as exc:
                 if await self._acan_retry(
@@ -1007,6 +1074,7 @@ class AsyncOpenAICompatibleLLMStrategy(_BaseOpenAICompatibleLLMStrategy):
                     "provider_connection_error",
                     safe,
                     warnings=ctx.warnings,
+                    telemetry=self._build_telemetry(ctx, transient_retries=transient_retries),
                 )
 
             decision = self._evaluate_response(
@@ -1032,13 +1100,19 @@ class AsyncOpenAICompatibleLLMStrategy(_BaseOpenAICompatibleLLMStrategy):
                     ctx=ctx,
                     transient_retries=transient_retries,
                     can_retry_more=False,
+                    record_usage=False,
                 )
                 return terminal.output or self._failed_output(
                     "provider_timeout",
                     "Extraction exceeded configured max_total_seconds deadline.",
                     warnings=ctx.warnings,
+                    telemetry=self._build_telemetry(ctx, transient_retries=transient_retries),
                 )
-            return decision.output or self._failed_output("extraction_error", "Empty response.")
+            return decision.output or self._failed_output(
+                "extraction_error",
+                "Empty response.",
+                telemetry=self._build_telemetry(ctx, transient_retries=transient_retries),
+            )
 
     async def _apost_request(
         self,
