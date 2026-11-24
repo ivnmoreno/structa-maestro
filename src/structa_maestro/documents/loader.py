@@ -14,15 +14,23 @@ from structa_maestro.config import DocumentLimits
 from structa_maestro.contracts.enums import DocumentFormat, IssueSeverity, PipelineStage
 from structa_maestro.contracts.models import DiagnosticIssue, SourceMetadata
 from structa_maestro.documents.docx_parser import parse_docx_bytes
+from structa_maestro.documents.eml_parser import parse_eml_bytes
+from structa_maestro.documents.html_parser import parse_html_bytes
 from structa_maestro.documents.inputs import (
     SUPPORTED_MEDIA_TYPES,
     DocumentInput,
     DocumentInputKind,
     sanitize_filename,
 )
+from structa_maestro.documents.markdown_parser import parse_markdown_bytes
 from structa_maestro.documents.models import PreparedDocument
 from structa_maestro.documents.pdf_parser import parse_pdf_bytes
-from structa_maestro.documents.txt_parser import parse_txt_bytes
+from structa_maestro.documents.txt_parser import (
+    ParseResult,
+    _decode_text_bytes,
+    _looks_binary,
+    parse_txt_bytes,
+)
 from structa_maestro.exceptions import ConfigurationError
 
 _MEDIA_TYPES: dict[DocumentFormat, str] = {
@@ -31,9 +39,33 @@ _MEDIA_TYPES: dict[DocumentFormat, str] = {
     DocumentFormat.DOCX: (
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     ),
+    DocumentFormat.HTML: "text/html",
+    DocumentFormat.MARKDOWN: "text/markdown",
+    DocumentFormat.EML: "message/rfc822",
 }
 
-_SUPPORTED_EXTENSIONS: frozenset[str] = frozenset({".txt", ".pdf", ".docx"})
+_EXTENSION_TO_FORMAT: dict[str, DocumentFormat] = {
+    ".txt": DocumentFormat.TXT,
+    ".pdf": DocumentFormat.PDF,
+    ".docx": DocumentFormat.DOCX,
+    ".html": DocumentFormat.HTML,
+    ".htm": DocumentFormat.HTML,
+    ".md": DocumentFormat.MARKDOWN,
+    ".markdown": DocumentFormat.MARKDOWN,
+    ".eml": DocumentFormat.EML,
+}
+
+_TEXT_FORMATS: frozenset[DocumentFormat] = frozenset(
+    {
+        DocumentFormat.TXT,
+        DocumentFormat.HTML,
+        DocumentFormat.MARKDOWN,
+        DocumentFormat.EML,
+    }
+)
+_EML_SNIFF_SECONDARY_HEADERS: frozenset[str] = frozenset(
+    {"subject", "date", "to", "mime-version", "content-type"}
+)
 _STREAM_CHUNK_BYTES: int = 65_536
 
 
@@ -47,8 +79,45 @@ class DocumentLoadResult:
     warnings: list[DiagnosticIssue] = field(default_factory=list)
 
 
-def _detect_format(raw: bytes, extension: str) -> tuple[DocumentFormat | None, str | None]:
-    """Detect actual document format from magic bytes rather than blindly trusting extensions."""
+def _sniff_extensionless_text_format(raw: bytes) -> DocumentFormat:
+    """Conservatively sniff unambiguous HTML or RFC 5322 EML on extensionless text payloads."""
+    decoded = _decode_text_bytes(raw[:4096])
+    if not decoded:
+        return DocumentFormat.TXT
+    stripped = decoded.lstrip("\ufeff \t\r\n")
+    lower_head = stripped[:64].lower()
+    if lower_head.startswith("<!doctype html") or lower_head.startswith("<html"):
+        return DocumentFormat.HTML
+
+    header_section = stripped.split("\r\n\r\n", 1)[0].split("\n\n", 1)[0]
+    header_names: set[str] = set()
+    valid_headers = True
+    for line in header_section.splitlines():
+        if not line:
+            continue
+        if line[0] in (" ", "\t") and header_names:
+            continue
+        if ":" not in line:
+            valid_headers = False
+            break
+        key = line.split(":", 1)[0].strip().lower()
+        if not key or any(not (ch.isalnum() or ch == "-") for ch in key):
+            valid_headers = False
+            break
+        header_names.add(key)
+
+    if valid_headers and "from" in header_names and (header_names & _EML_SNIFF_SECONDARY_HEADERS):
+        return DocumentFormat.EML
+
+    return DocumentFormat.TXT
+
+
+def _detect_format(
+    raw: bytes,
+    extension: str,
+    media_type_hint: str | None = None,
+) -> tuple[DocumentFormat | None, str | None]:
+    """Detect actual document format from magic bytes, signatures, and safe hints."""
     if raw.startswith(b"%PDF-"):
         return DocumentFormat.PDF, None
 
@@ -67,14 +136,53 @@ def _detect_format(raw: bytes, extension: str) -> tuple[DocumentFormat | None, s
         return None, "File has .pdf extension but does not start with a valid %PDF header."
     if extension == ".docx":
         return None, "File has .docx extension but is not a valid DOCX archive."
-    if extension == ".txt":
-        return DocumentFormat.TXT, None
 
-    if extension and extension not in _SUPPORTED_EXTENSIONS:
+    ext_format = _EXTENSION_TO_FORMAT.get(extension)
+    if ext_format is not None:
+        if _looks_binary(raw):
+            return (
+                None,
+                f"Input file with extension {extension!r} appears to contain binary data.",
+            )
+        return ext_format, None
+
+    if extension:
         return None, f"Unsupported document format extension: {extension!r}."
 
-    # Extensionless payload: attempt plain text only if not binary
-    return DocumentFormat.TXT, None
+    # Extensionless payload: reject binary bytes before considering text formats
+    if _looks_binary(raw):
+        return None, "Input payload appears to contain unsupported binary data."
+
+    if media_type_hint is not None:
+        hinted = SUPPORTED_MEDIA_TYPES.get(media_type_hint)
+        if hinted in _TEXT_FORMATS:
+            return hinted, None
+        if hinted is not None:
+            return (
+                None,
+                f"Caller media_type hint {media_type_hint!r} does not match detected content.",
+            )
+
+    return _sniff_extensionless_text_format(raw), None
+
+
+def _dispatch_parser(
+    detected_format: DocumentFormat,
+    raw: bytes,
+    source: SourceMetadata,
+    limits: DocumentLimits,
+) -> ParseResult:
+    if detected_format == DocumentFormat.TXT:
+        return parse_txt_bytes(raw, source, limits)
+    if detected_format == DocumentFormat.PDF:
+        return parse_pdf_bytes(raw, source, limits)
+    if detected_format == DocumentFormat.DOCX:
+        return parse_docx_bytes(raw, source, limits)
+    if detected_format == DocumentFormat.HTML:
+        return parse_html_bytes(raw, source, limits)
+    if detected_format == DocumentFormat.MARKDOWN:
+        return parse_markdown_bytes(raw, source, limits)
+    return parse_eml_bytes(raw, source, limits)
 
 
 def read_stream_bounded(
@@ -173,7 +281,7 @@ def _load_prepared_from_bytes(
         )
 
     ext = Path(safe_filename).suffix.lower() if safe_filename else ""
-    detected_format, detect_err = _detect_format(raw, ext)
+    detected_format, detect_err = _detect_format(raw, ext, media_type_hint=media_type_hint)
     if detected_format is None:
         return DocumentLoadResult(
             source=base_source,
@@ -206,7 +314,8 @@ def _load_prepared_from_bytes(
             )
 
     warnings: list[DiagnosticIssue] = []
-    if ext and ext in _SUPPORTED_EXTENSIONS and ext != f".{detected_format.value}":
+    ext_format = _EXTENSION_TO_FORMAT.get(ext)
+    if ext_format is not None and ext_format != detected_format:
         warnings.append(
             DiagnosticIssue(
                 code="extension_mismatch",
@@ -225,12 +334,7 @@ def _load_prepared_from_bytes(
         media_type=_MEDIA_TYPES[detected_format],
     )
 
-    if detected_format == DocumentFormat.TXT:
-        parsed = parse_txt_bytes(raw, source, limits)
-    elif detected_format == DocumentFormat.PDF:
-        parsed = parse_pdf_bytes(raw, source, limits)
-    else:
-        parsed = parse_docx_bytes(raw, source, limits)
+    parsed = _dispatch_parser(detected_format, raw, source, limits)
 
     return DocumentLoadResult(
         source=source,
@@ -468,18 +572,14 @@ def load_document_input(
 
     if doc_input.kind == DocumentInputKind.TEXT:
         raw_text_bytes = (doc_input.text or "").encode("utf-8")
-        base_source = SourceMetadata(
+        empty_source = SourceMetadata(
             document_id=resolved_doc_id,
             filename=safe_filename,
-            media_type=_MEDIA_TYPES[DocumentFormat.TXT],
+            media_type=None,
         )
         if len(raw_text_bytes) == 0:
             return DocumentLoadResult(
-                source=SourceMetadata(
-                    document_id=resolved_doc_id,
-                    filename=safe_filename,
-                    media_type=None,
-                ),
+                source=empty_source,
                 errors=[
                     DiagnosticIssue(
                         code="empty_document",
@@ -491,11 +591,7 @@ def load_document_input(
             )
         if len(raw_text_bytes) > active_limits.max_file_bytes:
             return DocumentLoadResult(
-                source=SourceMetadata(
-                    document_id=resolved_doc_id,
-                    filename=safe_filename,
-                    media_type=None,
-                ),
+                source=empty_source,
                 errors=[
                     DiagnosticIssue(
                         code="resource_limit_exceeded",
@@ -509,7 +605,37 @@ def load_document_input(
                     )
                 ],
             )
-        parsed = parse_txt_bytes(raw_text_bytes, base_source, active_limits)
+
+        target_format = DocumentFormat.TXT
+        if doc_input.media_type is not None:
+            hinted_fmt = SUPPORTED_MEDIA_TYPES.get(doc_input.media_type)
+            if hinted_fmt not in _TEXT_FORMATS:
+                return DocumentLoadResult(
+                    source=empty_source,
+                    errors=[
+                        DiagnosticIssue(
+                            code="unsupported_format",
+                            severity=IssueSeverity.ERROR,
+                            stage=PipelineStage.INPUT,
+                            message=(
+                                f"Binary media_type {doc_input.media_type!r} is not supported "
+                                "for DocumentInput.from_text(); use DocumentInput.from_bytes()."
+                            ),
+                        )
+                    ],
+                )
+            target_format = hinted_fmt
+        elif safe_filename is not None:
+            ext_fmt = _EXTENSION_TO_FORMAT.get(Path(safe_filename).suffix.lower())
+            if ext_fmt in _TEXT_FORMATS:
+                target_format = ext_fmt
+
+        base_source = SourceMetadata(
+            document_id=resolved_doc_id,
+            filename=safe_filename,
+            media_type=_MEDIA_TYPES[target_format],
+        )
+        parsed = _dispatch_parser(target_format, raw_text_bytes, base_source, active_limits)
         return DocumentLoadResult(
             source=base_source,
             document=parsed.document,

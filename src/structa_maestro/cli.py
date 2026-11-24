@@ -112,7 +112,7 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="structa-maestro",
         description=(
             "Extract validated, provenance-backed canonical structured records from "
-            "TXT, text-based PDF, or DOCX documents."
+            "TXT, text-based PDF, DOCX, HTML, Markdown, or EML documents."
         ),
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -123,7 +123,10 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     ext.add_argument(
         "document",
-        help="Path to the input document (TXT, PDF, or DOCX), or '-' to read from binary stdin.",
+        help=(
+            "Path to the input document (TXT, PDF, DOCX, HTML, Markdown, or EML), "
+            "or '-' to read from binary stdin."
+        ),
     )
     _add_common_extraction_args(ext)
     ext.add_argument(
@@ -359,7 +362,8 @@ def run_cli(
         discovered_paths = discover_batch_documents(args.inputs, recursive=args.recursive)
         if not discovered_paths:
             raise ConfigurationError(
-                "No supported input documents (.txt, .pdf, .docx) were discovered."
+                "No supported input documents "
+                "(.txt, .pdf, .docx, .html, .htm, .md, .markdown, .eml) were discovered."
             )
         batch_kwargs: dict[str, object] = {
             "strategy": strategy,

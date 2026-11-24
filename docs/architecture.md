@@ -16,7 +16,9 @@ Document Path / DocumentInput (bytes, text, stream) + ExtractionSchema (dict, JS
 2. Document Input & Parsing (`structa_maestro.documents`)
    - Path/permission checks, basename-only filename sanitization, & bounded chunked stream reading
    - Configurable DocumentLimits (25MB / 50MB / 200 pages) with zero temporary files written to disk
-   - Magic-byte / ZIP-container format detection (TXT, PDF, DOCX) + media_type hint reconciliation
+   - Magic-byte / ZIP-container format detection (TXT, PDF, DOCX, HTML, Markdown, EML) + media_type reconciliation
+   - Hardened stdlib HTML (`html.parser`), Markdown, and RFC 5322 EML (`email.parser`) parsers (zero network I/O,
+     script/style stripping, MIME-bomb limits, safe attachment skipping)
    - Lossless text normalization & DocumentSegment location map
         │
         ▼
