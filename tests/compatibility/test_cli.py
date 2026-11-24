@@ -368,3 +368,156 @@ def test_cli_extract_batch_directory_jsonl_summary_and_exit_codes(
         == 1
     )
     assert "STRUCTA_MAESTRO_API_KEY" in err_key.getvalue()
+
+
+def test_cli_extract_stdin_filename_max_bytes_and_exit_codes(
+    fixtures_dir: Path,
+    tmp_path: Path,
+    contract_json_schema: dict[str, Any],
+) -> None:
+    from tests.conftest import create_minimal_docx, create_minimal_pdf
+
+    schema_path = fixtures_dir / "schemas" / "invoice_schema.json"
+    ok_strat = DeterministicTestStrategy(
+        StrategyOutput(
+            records=(
+                ProposedRecord(
+                    fields={
+                        "invoice_number": ProposedField(value="INV-2026-001"),
+                        "vendor_name": ProposedField(value="Acme"),
+                        "issue_date": ProposedField(value=date(2026, 3, 15)),
+                        "total_amount": ProposedField(value=Decimal("100.00")),
+                        "currency": ProposedField(value="USD"),
+                    }
+                ),
+            )
+        )
+    )
+
+    # 1. Piped TXT via '-' with traversal --filename -> sanitized basename & exit 0
+    stdout_txt = io.StringIO()
+    code_txt = run_cli(
+        [
+            "extract",
+            "-",
+            "--schema",
+            str(schema_path),
+            "--filename",
+            "../../private/invoice_001.txt",
+            "--document-id",
+            "stdin-txt-1",
+        ],
+        stdout=stdout_txt,
+        stderr=io.StringIO(),
+        stdin_buffer=io.BytesIO(b"Invoice Number: INV-2026-001\n"),
+        strategy_override=ok_strat,
+    )
+    assert code_txt == 0
+    parsed_txt = json.loads(stdout_txt.getvalue())
+    jsonschema.validate(instance=parsed_txt, schema=contract_json_schema)
+    assert parsed_txt["source"]["filename"] == "invoice_001.txt"
+    assert parsed_txt["source"]["document_id"] == "stdin-txt-1"
+    assert parsed_txt["source"]["media_type"] == "text/plain"
+
+    # 2. Piped binary PDF & DOCX via '-' without --filename -> source.filename is None & exit 0
+    pdf_bytes = create_minimal_pdf(
+        tmp_path / "sample.pdf", ["Invoice Number: INV-2026-001"]
+    ).read_bytes()
+    stdout_pdf = io.StringIO()
+    assert (
+        run_cli(
+            ["extract", "-", "--schema", str(schema_path)],
+            stdout=stdout_pdf,
+            stderr=io.StringIO(),
+            stdin_buffer=io.BytesIO(pdf_bytes),
+            strategy_override=ok_strat,
+        )
+        == 0
+    )
+    parsed_pdf = json.loads(stdout_pdf.getvalue())
+    assert parsed_pdf["source"]["filename"] is None
+    assert parsed_pdf["source"]["media_type"] == "application/pdf"
+
+    docx_bytes = create_minimal_docx(
+        tmp_path / "sample.docx", ["Invoice Number: INV-2026-001"]
+    ).read_bytes()
+    stdout_docx = io.StringIO()
+    assert (
+        run_cli(
+            ["extract", "-", "--schema", str(schema_path), "--filename", "doc.docx"],
+            stdout=stdout_docx,
+            stderr=io.StringIO(),
+            stdin_buffer=io.BytesIO(docx_bytes),
+            strategy_override=ok_strat,
+        )
+        == 0
+    )
+    parsed_docx = json.loads(stdout_docx.getvalue())
+    assert parsed_docx["source"]["filename"] == "doc.docx"
+    assert parsed_docx["source"]["media_type"] == (
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
+
+    # 3. Empty stdin & oversized stdin via --max-bytes -> canonical failed JSON + exit 2
+    stdout_empty = io.StringIO()
+    assert (
+        run_cli(
+            ["extract", "-", "--schema", str(schema_path)],
+            stdout=stdout_empty,
+            stderr=io.StringIO(),
+            stdin_buffer=io.BytesIO(b""),
+            strategy_override=ok_strat,
+        )
+        == 2
+    )
+    assert json.loads(stdout_empty.getvalue())["status"] == "failed"
+
+    stdout_big = io.StringIO()
+    assert (
+        run_cli(
+            ["extract", "-", "--schema", str(schema_path), "--max-bytes", "32"],
+            stdout=stdout_big,
+            stderr=io.StringIO(),
+            stdin_buffer=io.BytesIO(b"A" * 1024),
+            strategy_override=ok_strat,
+        )
+        == 2
+    )
+    parsed_big = json.loads(stdout_big.getvalue())
+    assert parsed_big["status"] == "failed"
+    assert any(e["code"] == "resource_limit_exceeded" for e in parsed_big["errors"])
+
+    # 4. --filename with regular path, null byte in --filename, or --max-bytes <= 0 -> exit 1
+    doc_path = fixtures_dir / "documents" / "txt" / "invoice_001.txt"
+    err_fn = io.StringIO()
+    assert (
+        run_cli(
+            ["extract", str(doc_path), "--schema", str(schema_path), "--filename", "x.txt"],
+            stdout=io.StringIO(),
+            stderr=err_fn,
+            strategy_override=ok_strat,
+        )
+        == 1
+    )
+    assert "--filename" in err_fn.getvalue()
+
+    assert (
+        run_cli(
+            ["extract", "-", "--schema", str(schema_path), "--filename", "bad\x00.txt"],
+            stdout=io.StringIO(),
+            stderr=io.StringIO(),
+            stdin_buffer=io.BytesIO(b"hello"),
+            strategy_override=ok_strat,
+        )
+        == 1
+    )
+    assert (
+        run_cli(
+            ["extract", "-", "--schema", str(schema_path), "--max-bytes", "0"],
+            stdout=io.StringIO(),
+            stderr=io.StringIO(),
+            stdin_buffer=io.BytesIO(b"hello"),
+            strategy_override=ok_strat,
+        )
+        == 1
+    )

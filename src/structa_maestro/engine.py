@@ -10,14 +10,21 @@ from structa_maestro.batch import (
     BatchDocumentInput,
     BatchExtractionResult,
     BatchOptions,
+    _PreparedBatchItem,
     normalize_batch_inputs,
+    prepare_batch_items,
     run_batch_extraction,
 )
 from structa_maestro.builder.result_builder import ResultBuilder
 from structa_maestro.config import DocumentLimits, get_logger, sanitize_message
 from structa_maestro.contracts.enums import IssueSeverity, PipelineStage
 from structa_maestro.contracts.models import DiagnosticIssue, ExtractionResult, SchemaMetadata
-from structa_maestro.documents.loader import load_document
+from structa_maestro.documents.inputs import DocumentInput
+from structa_maestro.documents.loader import (
+    DocumentLoadResult,
+    load_document,
+    load_document_input,
+)
 from structa_maestro.exceptions import ConfigurationError, SchemaDefinitionError
 from structa_maestro.schema.models import ExtractionSchema
 from structa_maestro.strategies.base import ExtractionStrategy
@@ -60,39 +67,12 @@ class ExtractionEngine:
         """Configured document safety limits."""
         return self._limits
 
-    def extract(
+    def _extract_from_load_result(
         self,
-        document: str | Path,
-        schema: ExtractionSchema | Mapping[str, Any],
-        *,
-        document_id: str | None = None,
+        load_result: DocumentLoadResult,
+        parsed_schema: ExtractionSchema,
     ) -> ExtractionResult:
-        """Extract validated canonical structured records from a single document.
-
-        Failure boundary (contracts/python-api-and-cli.md Section 1.2):
-        - Invalid schema or engine configuration raises SchemaDefinitionError / ConfigurationError.
-        - All document input, parsing, extraction, provenance, and validation failures return
-          a canonical ExtractionResult with status='failed' or status='partial'.
-        """
-        # 1. Pre-flight schema validation (raises SchemaDefinitionError on caller mistake)
-        parsed_schema = _coerce_schema(schema)
-
-        if not isinstance(document, (str, Path)):
-            return self._builder.build_failed(
-                schema=parsed_schema,
-                source=None,
-                errors=[
-                    DiagnosticIssue(
-                        code="invalid_input",
-                        severity=IssueSeverity.ERROR,
-                        stage=PipelineStage.INPUT,
-                        message="Document input must be a file path (str or pathlib.Path).",
-                    )
-                ],
-            )
-
-        # 2. Safe document loading & text preparation
-        load_result = load_document(document, limits=self._limits, document_id=document_id)
+        """Run strategy + canonical assembly from an already-loaded DocumentLoadResult."""
         if load_result.document is None:
             _logger.debug(
                 "Document loading failed for document_id=%s with %d error(s)",
@@ -164,29 +144,83 @@ class ExtractionEngine:
                 warnings=load_result.warnings,
             )
 
+    def extract(
+        self,
+        document: str | Path | DocumentInput,
+        schema: ExtractionSchema | Mapping[str, Any],
+        *,
+        document_id: str | None = None,
+    ) -> ExtractionResult:
+        """Extract validated canonical structured records from a path or DocumentInput.
+
+        Failure boundary:
+        - Invalid schema, engine configuration, or blank call-level document_id alongside a
+          DocumentInput raises SchemaDefinitionError / ConfigurationError eagerly.
+        - All document input, parsing, extraction, provenance, and validation failures return
+          a canonical ExtractionResult with status='failed' or status='partial'.
+        """
+        # 1. Pre-flight schema validation (raises SchemaDefinitionError on caller mistake)
+        parsed_schema = _coerce_schema(schema)
+
+        if isinstance(document, DocumentInput):
+            load_result = load_document_input(
+                document,
+                limits=self._limits,
+                document_id=document_id,
+            )
+            return self._extract_from_load_result(load_result, parsed_schema)
+
+        if not isinstance(document, (str, Path)):
+            return self._builder.build_failed(
+                schema=parsed_schema,
+                source=None,
+                errors=[
+                    DiagnosticIssue(
+                        code="invalid_input",
+                        severity=IssueSeverity.ERROR,
+                        stage=PipelineStage.INPUT,
+                        message=(
+                            "Document input must be a file path (str or pathlib.Path) "
+                            "or a DocumentInput instance."
+                        ),
+                    )
+                ],
+            )
+
+        # 2. Safe document loading & text preparation
+        load_result = load_document(document, limits=self._limits, document_id=document_id)
+        return self._extract_from_load_result(load_result, parsed_schema)
+
     def extract_batch(
         self,
-        documents: Sequence[str | Path | BatchDocumentInput],
+        documents: Sequence[str | Path | BatchDocumentInput | DocumentInput],
         schema: ExtractionSchema | Mapping[str, Any],
         *,
         options: BatchOptions | None = None,
     ) -> BatchExtractionResult:
-        """Statelessly extract a collection of documents in deterministic input order."""
+        """Statelessly extract a mixed collection of paths and in-memory documents in order."""
         parsed_schema = _coerce_schema(schema)
         resolved_options = options if options is not None else BatchOptions()
         if not isinstance(resolved_options, BatchOptions):
             raise ConfigurationError("options must be a BatchOptions instance or None.")
         normalized_inputs = normalize_batch_inputs(documents)
+        prepared_items = prepare_batch_items(
+            normalized_inputs,
+            limits=self._limits,
+            max_workers=resolved_options.max_workers,
+        )
         schema_meta = SchemaMetadata(
             schema_id=parsed_schema.schema_id,
             schema_version=parsed_schema.schema_version,
         )
 
-        def _extract_one(item: BatchDocumentInput) -> ExtractionResult:
-            return self.extract(item.path, parsed_schema, document_id=item.document_id)
+        def _extract_one(item: _PreparedBatchItem) -> ExtractionResult:
+            if item.preloaded_error is not None:
+                return self._extract_from_load_result(item.preloaded_error, parsed_schema)
+            return self.extract(item.document_input, parsed_schema)
 
         return run_batch_extraction(
-            inputs=normalized_inputs,
+            inputs=prepared_items,
             schema_metadata=schema_meta,
             options=resolved_options,
             extract_one=_extract_one,
@@ -194,7 +228,7 @@ class ExtractionEngine:
 
 
 def extract(
-    document: str | Path,
+    document: str | Path | DocumentInput,
     schema: ExtractionSchema | Mapping[str, Any],
     *,
     strategy: ExtractionStrategy,
@@ -207,7 +241,7 @@ def extract(
 
 
 def extract_batch(
-    documents: Sequence[str | Path | BatchDocumentInput],
+    documents: Sequence[str | Path | BatchDocumentInput | DocumentInput],
     schema: ExtractionSchema | Mapping[str, Any],
     *,
     strategy: ExtractionStrategy,

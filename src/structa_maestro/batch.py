@@ -12,8 +12,21 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from structa_maestro.contracts.enums import ProcessingStatus, ValidationStatus
-from structa_maestro.contracts.models import ExtractionResult, SchemaMetadata
+from structa_maestro.config import DocumentLimits
+from structa_maestro.contracts.enums import (
+    IssueSeverity,
+    PipelineStage,
+    ProcessingStatus,
+    ValidationStatus,
+)
+from structa_maestro.contracts.models import (
+    DiagnosticIssue,
+    ExtractionResult,
+    SchemaMetadata,
+    SourceMetadata,
+)
+from structa_maestro.documents.inputs import DocumentInput, DocumentInputKind
+from structa_maestro.documents.loader import DocumentLoadResult, read_stream_bounded
 from structa_maestro.exceptions import ConfigurationError
 
 MAX_BATCH_WORKERS = 32
@@ -45,6 +58,14 @@ class BatchDocumentInput:
                     "BatchDocumentInput.document_id must be a non-empty string or None."
                 )
             object.__setattr__(self, "document_id", self.document_id.strip())
+
+
+@dataclass(frozen=True, slots=True)
+class _PreparedBatchItem:
+    """Internal normalized batch item holding a DocumentInput and optional pre-captured error."""
+
+    document_input: DocumentInput
+    preloaded_error: DocumentLoadResult | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,28 +159,32 @@ class BatchExtractionResult:
 
 
 def normalize_batch_inputs(
-    documents: Sequence[str | Path | BatchDocumentInput],
-) -> tuple[BatchDocumentInput, ...]:
-    """Eagerly validate and normalize batch input descriptors before opening any file."""
+    documents: Sequence[str | Path | BatchDocumentInput | DocumentInput],
+) -> tuple[DocumentInput, ...]:
+    """Eagerly validate and normalize batch input descriptors before opening any file or stream."""
     if isinstance(documents, (str, bytes, bytearray)) or not isinstance(documents, Sequence):
         raise ConfigurationError(
-            "Batch documents must be a non-empty sequence of paths or BatchDocumentInput items."
+            "Batch documents must be a non-empty sequence of paths, BatchDocumentInput, "
+            "or DocumentInput items."
         )
     if len(documents) == 0:
         raise ConfigurationError("Batch documents collection cannot be empty.")
 
-    normalized: list[BatchDocumentInput] = []
+    normalized: list[DocumentInput] = []
     seen_doc_ids: set[str] = set()
     for idx, item in enumerate(documents):
-        if isinstance(item, BatchDocumentInput):
+        if isinstance(item, DocumentInput):
             desc = item
+        elif isinstance(item, BatchDocumentInput):
+            desc = DocumentInput.from_path(item.path, document_id=item.document_id)
         elif isinstance(item, (str, Path)):
             if isinstance(item, str) and not item.strip():
                 raise ConfigurationError(f"Batch document at index {idx} cannot be blank.")
-            desc = BatchDocumentInput(path=Path(item))
+            desc = DocumentInput.from_path(item)
         else:
             raise ConfigurationError(
-                f"Batch document at index {idx} must be str, pathlib.Path, or BatchDocumentInput."
+                f"Batch document at index {idx} must be str, pathlib.Path, "
+                "BatchDocumentInput, or DocumentInput."
             )
 
         if desc.document_id is not None:
@@ -171,6 +196,55 @@ def normalize_batch_inputs(
         normalized.append(desc)
 
     return tuple(normalized)
+
+
+def prepare_batch_items(
+    inputs: tuple[DocumentInput, ...],
+    *,
+    limits: DocumentLimits,
+    max_workers: int,
+) -> tuple[_PreparedBatchItem, ...]:
+    """Prepare normalized batch items, safely pre-materializing streams for concurrent workers."""
+    if max_workers <= 1:
+        return tuple(_PreparedBatchItem(document_input=item) for item in inputs)
+
+    prepared: list[_PreparedBatchItem] = []
+    for item in inputs:
+        if item.kind != DocumentInputKind.STREAM:
+            prepared.append(_PreparedBatchItem(document_input=item))
+            continue
+
+        if item.stream is None:
+            raise ConfigurationError("STREAM DocumentInput is missing a binary stream.")
+
+        raw_bytes, read_err = read_stream_bounded(item.stream, max_bytes=limits.max_file_bytes)
+        if read_err is not None or raw_bytes is None:
+            doc_id = item.document_id or str(uuid4())
+            err_issue = read_err or DiagnosticIssue(
+                code="invalid_input",
+                severity=IssueSeverity.ERROR,
+                stage=PipelineStage.INPUT,
+                message="Failed to read input binary stream.",
+            )
+            failed_load = DocumentLoadResult(
+                source=SourceMetadata(
+                    document_id=doc_id,
+                    filename=item.filename,
+                    media_type=None,
+                ),
+                errors=[err_issue],
+            )
+            prepared.append(_PreparedBatchItem(document_input=item, preloaded_error=failed_load))
+        else:
+            snapshot = DocumentInput.from_bytes(
+                raw_bytes,
+                filename=item.filename,
+                document_id=item.document_id,
+                media_type=item.media_type,
+            )
+            prepared.append(_PreparedBatchItem(document_input=snapshot))
+
+    return tuple(prepared)
 
 
 def _compute_summary(
@@ -206,10 +280,10 @@ def _compute_summary(
 
 def run_batch_extraction(
     *,
-    inputs: tuple[BatchDocumentInput, ...],
+    inputs: tuple[_PreparedBatchItem, ...],
     schema_metadata: SchemaMetadata,
     options: BatchOptions,
-    extract_one: Callable[[BatchDocumentInput], ExtractionResult],
+    extract_one: Callable[[_PreparedBatchItem], ExtractionResult],
 ) -> BatchExtractionResult:
     """Execute stateless sequential or bounded concurrent batch extraction in exact input order."""
     started = time.perf_counter()

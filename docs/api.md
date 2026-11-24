@@ -5,10 +5,11 @@ All stable public symbols are exported from the top-level `structa_maestro` pack
 ## Library Entry Points
 
 - `ExtractionEngine(strategy, *, limits=None)`
-  - `.extract(document: str | Path, schema: ExtractionSchema | Mapping[str, Any], *, document_id: str | None = None) -> ExtractionResult`
-  - `.extract_batch(documents: Sequence[str | Path | BatchDocumentInput], schema: ExtractionSchema | Mapping[str, Any], *, options: BatchOptions | None = None) -> BatchExtractionResult`
+  - `.extract(document: str | Path | DocumentInput, schema: ExtractionSchema | Mapping[str, Any], *, document_id: str | None = None) -> ExtractionResult`
+  - `.extract_batch(documents: Sequence[str | Path | BatchDocumentInput | DocumentInput], schema: ExtractionSchema | Mapping[str, Any], *, options: BatchOptions | None = None) -> BatchExtractionResult`
 - `extract(document, schema, *, strategy, limits=None, document_id=None) -> ExtractionResult`
 - `extract_batch(documents, schema, *, strategy, limits=None, options=None) -> BatchExtractionResult`
+- In-memory input descriptors: `DocumentInput` (`DocumentInputKind`: `path`, `bytes`, `text`, `stream`) constructed via `DocumentInput.from_path(path, *, filename=None, document_id=None, media_type=None)`, `DocumentInput.from_bytes(content, *, filename=None, document_id=None, media_type=None)`, `DocumentInput.from_text(text, *, filename=None, document_id=None, media_type=None)`, and `DocumentInput.from_stream(stream, *, filename=None, document_id=None, media_type=None)`. Filenames are sanitized to basename-only (null bytes fail eagerly); binary streams are read incrementally up to `max_file_bytes + 1` bytes without creating temporary files. See [examples/in_memory_extraction_example.py](../examples/in_memory_extraction_example.py).
 - Batch models: `BatchDocumentInput(path, document_id=None)`, `BatchOptions(max_workers=1, fail_fast=False)` (`1 <= max_workers <= 32`), `BatchSummary` (`to_dict()`, `to_json()`), `BatchExtractionResult` (`to_jsonl()`, `to_dict()`, `to_json()`). See [examples/batch_extraction_example.py](../examples/batch_extraction_example.py).
 
 ## Schema Definition
@@ -83,13 +84,15 @@ All stable public symbols are exported from the top-level `structa_maestro` pack
 ## Thin CLI (`structa-maestro`)
 
 ```text
-structa-maestro extract <document> --schema <schema.json>
+structa-maestro extract <document|-> --schema <schema.json>
+  [--filename <name>]        # stdin ('-') only; sanitized to basename
   [--output <result.json>]
   [--document-id <id>]
   [--model <model>]
   [--base-url <url>]
   [--api-key-env STRUCTA_MAESTRO_API_KEY]
   [--max-file-mb 25]
+  [--max-bytes <int>]        # optional byte-exact override for --max-file-mb
   [--max-decompressed-mb 50]
   [--max-pages 200]
   [--structured-output-mode strict_with_fallback|strict|json_object]

@@ -7,11 +7,12 @@ import os
 import sys
 from collections.abc import Sequence
 from pathlib import Path
-from typing import TextIO
+from typing import BinaryIO, TextIO
 
 from structa_maestro.batch import BatchOptions, discover_batch_documents
 from structa_maestro.config import DocumentLimits, sanitize_message
 from structa_maestro.contracts.enums import ProcessingStatus, ValidationStatus
+from structa_maestro.documents.inputs import DocumentInput
 from structa_maestro.engine import extract, extract_batch
 from structa_maestro.exceptions import ConfigurationError, StructaMaestroError
 from structa_maestro.schema.models import ExtractionSchema
@@ -51,6 +52,14 @@ def _add_common_extraction_args(parser: argparse.ArgumentParser) -> None:
         type=int,
         default=25,
         help="Maximum raw file size in MB (default: 25).",
+    )
+    parser.add_argument(
+        "--max-bytes",
+        type=int,
+        default=None,
+        help=(
+            "Optional byte-exact override for maximum input payload size (overrides --max-file-mb)."
+        ),
     )
     parser.add_argument(
         "--max-decompressed-mb",
@@ -104,10 +113,18 @@ def _build_parser() -> argparse.ArgumentParser:
 
     ext = subparsers.add_parser(
         "extract",
-        help="Extract structured records from one document using a JSON schema file.",
+        help="Extract structured records from one document (or '-' for stdin) using a JSON schema.",
     )
-    ext.add_argument("document", help="Path to the input document (TXT, PDF, or DOCX).")
+    ext.add_argument(
+        "document",
+        help="Path to the input document (TXT, PDF, or DOCX), or '-' to read from binary stdin.",
+    )
     _add_common_extraction_args(ext)
+    ext.add_argument(
+        "--filename",
+        default=None,
+        help="Optional filename hint for stdin ('-') input (sanitized to basename only).",
+    )
     ext.add_argument("--output", help="Optional path to write canonical JSON output.")
     ext.add_argument("--document-id", help="Optional caller-supplied source document identifier.")
     ext.add_argument(
@@ -155,8 +172,11 @@ def _build_strategy_and_limits(
     api_key_val: str,
     strategy_override: ExtractionStrategy | None,
 ) -> tuple[ExtractionStrategy, DocumentLimits]:
+    max_file_bytes = (
+        args.max_bytes if args.max_bytes is not None else args.max_file_mb * 1024 * 1024
+    )
     limits = DocumentLimits(
-        max_file_bytes=args.max_file_mb * 1024 * 1024,
+        max_file_bytes=max_file_bytes,
         max_decompressed_bytes=args.max_decompressed_mb * 1024 * 1024,
         max_pages=args.max_pages,
     )
@@ -187,6 +207,7 @@ def run_cli(
     *,
     stdout: TextIO | None = None,
     stderr: TextIO | None = None,
+    stdin_buffer: BinaryIO | None = None,
     strategy_override: ExtractionStrategy | None = None,
 ) -> int:
     """Execute the thin CLI (`extract` or `extract-batch`) and return exit code 0, 1, or 2."""
@@ -209,14 +230,28 @@ def run_cli(
 
     if args.command == "extract":
         try:
+            if args.filename is not None and args.document != "-":
+                raise ConfigurationError(
+                    "--filename is only supported when reading from stdin ('-')."
+                )
             schema = ExtractionSchema.from_json_file(args.schema)
             strategy, limits = _build_strategy_and_limits(
                 args,
                 api_key_val=api_key_val,
                 strategy_override=strategy_override,
             )
+            doc_target: str | DocumentInput
+            if args.document == "-":
+                in_stream = stdin_buffer if stdin_buffer is not None else sys.stdin.buffer
+                doc_target = DocumentInput.from_stream(
+                    in_stream,
+                    filename=args.filename,
+                    document_id=args.document_id,
+                )
+            else:
+                doc_target = args.document
             result = extract(
-                args.document,
+                doc_target,
                 schema,
                 strategy=strategy,
                 limits=limits,
