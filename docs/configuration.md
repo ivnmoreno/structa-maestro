@@ -30,7 +30,7 @@ When using `OpenAICompatibleLLMStrategy` / `AsyncOpenAICompatibleLLMStrategy` or
   - `strict_with_fallback` *(default)*: Compiles `ExtractionSchema` into a strict closed `json_schema` response format (`additionalProperties: false`) and automatically falls back once to `json_object` with warning `structured_output_fallback` if the schema sets `allow_additional_fields=True` or the endpoint rejects strict schema mode.
   - `strict`: Enforces strict `json_schema` mode without fallback (fails explicitly with `strict_schema_incompatible` on open schemas or on endpoint rejection).
   - `json_object`: Uses basic JSON-object response mode directly.
-- **Bounded Retries (`RetryPolicy`)**: Automatically retries transient failures (`408`, `429`, `5xx`, timeouts, connection errors, and retryable malformed/truncated model JSON by default) up to `max_retries=2` with bounded exponential backoff, jitter, RFC 7231 `Retry-After` honoring, and optional `max_total_seconds` deadline capping. Permanent errors (`400`/`422` non-fallback, `401`, `403`, `404`, policy refusals) fail immediately with zero retries.
+- **Bounded Retries (`RetryPolicy`)**: Automatically retries transient failures (`408`, `429`, `5xx`, Anthropic `529` overloaded, timeouts, connection errors, and retryable malformed/truncated model JSON by default) up to `max_retries=2` with bounded exponential backoff, jitter, RFC 7231 `Retry-After` honoring, and optional `max_total_seconds` deadline capping. Permanent errors (`400`/`422` non-fallback, `401`, `403`, `404`, policy refusals) fail immediately with zero retries.
 - **Document Input Budget (`InputBudgetPolicy`)**: Enforces `max_input_chars=120_000` by default (overrideable to any positive integer or `None` to disable) with `overflow_policy="reject"` (fails pre-network with `input_budget_exceeded`) or `overflow_policy="truncate"` (truncates on a clean line boundary, forces `partial` status, and emits `input_truncated`).
 - **Prompt Injection Defense**: Every call wraps prepared text in a fresh cryptographic nonce tag (`<untrusted_document nonce="...">`) separated from system instructions, neutralizes embedded `<untrusted_document`/`</untrusted_document` tags inside prompt text without mutating `PreparedDocument` for provenance verification, and independently rejects schema-violating or extra injected fields during deterministic validation.
 
@@ -38,8 +38,8 @@ When using `OpenAICompatibleLLMStrategy` / `AsyncOpenAICompatibleLLMStrategy` or
 
 | Control | Default | CLI Flag | Behavior |
 | --- | --- | --- | --- |
-| `structured_output_mode` | `strict_with_fallback` | `--structured-output-mode` | Sends strict `json_schema`; falls back once to `json_object` if unsupported |
-| `RetryPolicy.max_retries` | `2` | `--max-retries` | Bounded retries on `408`/`429`/`5xx`, timeouts, transport errors, and malformed JSON |
+| `structured_output_mode` | `strict_with_fallback` | `--structured-output-mode` | Sends strict `json_schema` (OpenAI) or forced `tool_use` (Anthropic); falls back once to JSON-text mode if unsupported |
+| `RetryPolicy.max_retries` | `2` | `--max-retries` | Bounded retries on `408`/`429`/`5xx`/`529`, timeouts, transport errors, and malformed JSON |
 | `RetryPolicy.initial_backoff_seconds` | `0.5` | *(Python API)* | Base exponential backoff delay (seconds) |
 | `RetryPolicy.max_backoff_seconds` | `8.0` | *(Python API)* | Upper backoff cap (also bounds parsed `Retry-After` delays) |
 | `RetryPolicy.jitter` | `True` | *(Python API)* | Equal jitter in `[0.5 * base, base]` to prevent retry storms |
@@ -86,7 +86,7 @@ When using `AsyncOpenAICompatibleLLMStrategy` or `AsyncAnthropicLLMStrategy` in 
 - **Shared Lifespan Client (Recommended for Services)**: Create one `httpx.AsyncClient(timeout=60.0)` during application startup/lifespan, pass it via `http_client=client`, and close it on application shutdown. Neither async strategy will ever close a caller-injected client.
 - **Scoped Pooled Context (Recommended for Scripts & Batch Jobs)**: Enter `async with AsyncOpenAICompatibleLLMStrategy(...) as strategy:` (or `async with AsyncAnthropicLLMStrategy(...) as strategy:`) to pool a single strategy-owned `httpx.AsyncClient` across concurrent `aextract_batch` calls (nested `async with` is reference-counted and `await strategy.aclose()` is idempotent).
 - **Standalone One-Off Calls**: Calling `await aextract(...)` outside `async with` without an injected `http_client` safely creates and closes a per-call `httpx.AsyncClient` so sockets never leak.
-- **Task Cancellation**: `asyncio.CancelledError` is never swallowed by `aextract`, `aextract_batch`, or `AsyncOpenAICompatibleLLMStrategy`; cancelling an `aextract_batch` task cancels and awaits all active child tasks cleanly before propagating `CancelledError`.
+- **Task Cancellation**: `asyncio.CancelledError` is never swallowed by `aextract`, `aextract_batch`, `AsyncOpenAICompatibleLLMStrategy`, or `AsyncAnthropicLLMStrategy`; cancelling an `aextract_batch` task cancels and awaits all active child tasks cleanly before propagating `CancelledError`.
 
 ## Logging & Data Minimization
 
@@ -126,10 +126,21 @@ class PrometheusTelemetryAdapter:
             and event.strategy_telemetry.token_usage
         ):
             usage = event.strategy_telemetry.token_usage
+            if usage.prompt_tokens is not None:
+                self._token_counter.labels(
+                    strategy=event.strategy_name or "unknown", kind="prompt"
+                ).inc(usage.prompt_tokens)
+            if usage.completion_tokens is not None:
+                self._token_counter.labels(
+                    strategy=event.strategy_name or "unknown", kind="completion"
+                ).inc(usage.completion_tokens)
             if usage.total_tokens is not None:
-                self._token_counter.labels(strategy=event.strategy_name or "unknown").inc(
-                    usage.total_tokens
-                )
+                self._token_counter.labels(
+                    strategy=event.strategy_name or "unknown", kind="total"
+                ).inc(usage.total_tokens)
 ```
+
+> [!TIP]
+> Recording `prompt_tokens` and `completion_tokens` alongside optional `total_tokens` ensures accurate token accounting across both OpenAI-compatible endpoints and native Anthropic `/v1/messages` responses (where Anthropic omits `total_tokens`, so `structa-maestro` leaves it as `None` rather than fabricating a sum).
 
 For async I/O-bound telemetry sinks (e.g., flushing spans or webhooks over HTTP), implement `AsyncExtractionObserver` (`async def aon_event(self, event: ExtractionEvent) -> None`) so the event loop is never blocked. For CLI jobs, pass `--telemetry-json telemetry.json` to `structa-maestro extract` or `extract-batch` to export `TelemetrySummary` JSON without altering Contract `v1.0` output on `stdout`.

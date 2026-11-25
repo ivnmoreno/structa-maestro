@@ -2,6 +2,8 @@
 
 All stable public symbols are exported from the top-level `structa_maestro` package.
 
+[Entry Points](#library-entry-points) • [Schema Definition](#schema-definition) • [Typed Binding](#strict-opt-in-typed-record-binding-bind_record-bind_records) • [Strategies](#strategies--reliability-policies) • [Observability](#observability--privacy-safe-telemetry) • [Canonical Contract](#canonical-output--serialization) • [Exceptions](#exceptions) • [Diagnostics](#extraction-strategy-diagnostic-codes-pipelinestageextraction) • [Thin CLI](#thin-cli-structa-maestro)
+
 ## Library Entry Points
 
 - `ExtractionEngine(strategy: ExtractionStrategy | AsyncExtractionStrategy, *, limits=None, result_builder=None, observers=None)`
@@ -118,7 +120,7 @@ All telemetry models and observer hooks are strictly decoupled from Canonical Ou
   - `ExtractionEventKind`: `extraction_started`, `document_loaded`, `strategy_completed`, `extraction_completed`, `batch_started`, `batch_item_completed`, `batch_completed`.
   - `ExtractionEvent` (`to_dict()`, `to_json()`): unified correlated event envelope (`extraction_id`, optional `batch_id`, `document_id`, basename-only `filename`, `media_type`, schema/strategy IDs, `elapsed_ms`, statuses, counts, sanitized diagnostic `code` tuples, `stage_timing`, `stage_timings`, `strategy_telemetry`, `batch_progress`).
   - `StageTiming(stage, elapsed_ms, succeeded)` & `StageTimingSummary(stage, count, total_ms, mean_ms, p50_ms, max_ms)` (`p50_ms` uses exact `statistics.median`).
-  - `TokenUsage(prompt_tokens, completion_tokens, total_tokens)` & `StrategyTelemetry(attempts, retry_count, structured_output_mode_used, fallback_used, truncated, token_usage)` (populated cumulatively across attempts by `OpenAICompatibleLLMStrategy` and `AsyncOpenAICompatibleLLMStrategy`, leaving unavailable counts as `None`).
+  - `TokenUsage(prompt_tokens, completion_tokens, total_tokens)` & `StrategyTelemetry(attempts, retry_count, structured_output_mode_used, fallback_used, truncated, token_usage)` (populated cumulatively across attempts by `OpenAICompatibleLLMStrategy`, `AsyncOpenAICompatibleLLMStrategy`, `AnthropicLLMStrategy`, and `AsyncAnthropicLLMStrategy`, leaving unavailable/omitted counts as `None`).
   - `BatchProgress` & `TelemetrySummary` (`to_dict()`, `to_json()`).
 - See [examples/observability_telemetry_example.py](../examples/observability_telemetry_example.py) for an offline runnable walkthrough.
 
@@ -128,6 +130,9 @@ All telemetry models and observer hooks are strictly decoupled from Canonical Ou
 - `ExtractionResult.to_json(*, indent: int | None = None) -> str`
 - `ExtractionResult.from_dict(data) -> ExtractionResult`
 - `ExtractionResult.from_json(raw_json) -> ExtractionResult`
+
+> [!NOTE]
+> Canonical Output Record Contract `v1.0` structural and assembly invariants are additionally formalized and machine-checked in Lean 4 under `formal/` (dev/CI only; zero runtime dependency). See [Formal Assurance Layer](formal-assurance.md).
 
 ## Exceptions
 
@@ -140,7 +145,7 @@ All telemetry models and observer hooks are strictly decoupled from Canonical Ou
 
 | Code | Severity | Meaning |
 | --- | --- | --- |
-| `structured_output_fallback` | `warning` | Strategy fell back from strict `json_schema` to `json_object` (open schema or unsupported endpoint). |
+| `structured_output_fallback` | `warning` | Strategy fell back once from strict `json_schema` (OpenAI) or forced `tool_use` (Anthropic) to `json_object` / JSON-text mode (open schema or unsupported endpoint). |
 | `strict_schema_incompatible` | `error` | `StructuredOutputMode.STRICT` was requested for a schema with `allow_additional_fields=True`. |
 | `model_output_sanitized` | `warning` | Valid top-level JSON envelope was recovered after stripping outer Markdown fences or surrounding text. |
 | `provider_retry_succeeded` | `warning` | Extraction succeeded after one or more bounded retries following transient failures. |
