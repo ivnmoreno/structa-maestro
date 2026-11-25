@@ -635,3 +635,81 @@ def test_telemetry_events_summaries_and_structured_logs_never_leak_sensitive_dat
 
     assert sync_mem.summary().total_tokens == 140
     assert async_mem.summary().total_tokens == 140
+
+
+@pytest.mark.security
+def test_anthropic_sync_and_async_strategies_never_leak_api_keys_or_raw_text(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import asyncio
+
+    from structa_maestro import (
+        AnthropicLLMStrategy,
+        AsyncAnthropicLLMStrategy,
+        DocumentInput,
+        InMemoryTelemetryObserver,
+        RetryPolicy,
+        aextract,
+        extract,
+    )
+    from structa_maestro.config import sanitize_message
+
+    ant_key = "sk-ant-api03-super-secret-999111"
+    custom_x_key = "custom_anthropic_secret_444555"
+    secret_text = "CONFIDENTIAL MERGER TERM SHEET 500M"
+    doc = DocumentInput.from_text(f"Note: {secret_text}\n", filename="/private/deal/memo.txt")
+    schema = {
+        "schema_id": "deal-sec",
+        "schema_version": "1.0",
+        "fields": {"note": {"type": "string", "required": True}},
+    }
+
+    assert custom_x_key not in sanitize_message(f"Header failed x-api-key: {custom_x_key}")
+
+    def _sync_fail(_r: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError(f"Failed x-api-key={ant_key} body={secret_text}")
+
+    async def _async_fail(_r: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError(f"Failed x-api-key={ant_key} body={secret_text}")
+
+    obs = InMemoryTelemetryObserver()
+    with (
+        caplog.at_level(logging.DEBUG, logger="structa_maestro"),
+        httpx.Client(transport=httpx.MockTransport(_sync_fail)) as sc,
+    ):
+        s_strat = AnthropicLLMStrategy(
+            model="claude-sonnet-4-5",
+            api_key=ant_key,
+            http_client=sc,
+            retry_policy=RetryPolicy(max_retries=0),
+        )
+        assert ant_key not in repr(s_strat)
+        res_sync = extract(doc, schema, strategy=s_strat, observers=[obs])
+
+    async def _run_async() -> str:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(_async_fail)) as ac:
+            a_strat = AsyncAnthropicLLMStrategy(
+                model="claude-sonnet-4-5",
+                api_key=ant_key,
+                http_client=ac,
+                retry_policy=RetryPolicy(max_retries=0),
+            )
+            assert ant_key not in repr(a_strat)
+            res_a = await aextract(doc, schema, strategy=a_strat, observers=[obs])
+            return res_a.to_json()
+
+    with caplog.at_level(logging.DEBUG, logger="structa_maestro"):
+        async_json = asyncio.run(_run_async())
+
+    combined = "\n".join(
+        [
+            res_sync.to_json(),
+            async_json,
+            obs.summary().to_json(),
+            *(e.to_json() for e in obs.events()),
+            caplog.text,
+        ]
+    )
+    assert ant_key not in combined
+    assert secret_text not in combined
+    assert "/private/deal" not in combined

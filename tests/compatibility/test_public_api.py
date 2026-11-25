@@ -41,6 +41,8 @@ def test_public_api_exports_and_version() -> None:
         "AsyncExtractionStrategy",
         "OpenAICompatibleLLMStrategy",
         "AsyncOpenAICompatibleLLMStrategy",
+        "AnthropicLLMStrategy",
+        "AsyncAnthropicLLMStrategy",
         "DeterministicTestStrategy",
         "AsyncDeterministicTestStrategy",
         "StructuredOutputMode",

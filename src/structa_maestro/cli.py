@@ -17,6 +17,11 @@ from structa_maestro.engine import extract, extract_batch
 from structa_maestro.exceptions import ConfigurationError, StructaMaestroError
 from structa_maestro.schema.models import ExtractionSchema
 from structa_maestro.strategies.base import ExtractionStrategy
+from structa_maestro.strategies.llm_anthropic import (
+    DEFAULT_ANTHROPIC_BASE_URL,
+    DEFAULT_ANTHROPIC_MAX_TOKENS,
+    AnthropicLLMStrategy,
+)
 from structa_maestro.strategies.llm_config import (
     DEFAULT_MAX_INPUT_CHARS,
     InputBudgetOverflowPolicy,
@@ -31,22 +36,63 @@ from structa_maestro.telemetry import InMemoryTelemetryObserver
 _DEFAULT_API_KEY_ENV = "STRUCTA_MAESTRO_API_KEY"
 _DEFAULT_BASE_URL = "https://api.openai.com/v1"
 _DEFAULT_MODEL = "gpt-4o-mini"
+_DEFAULT_ANTHROPIC_API_KEY_ENV = "ANTHROPIC_API_KEY"
+_DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-5"
+
+
+def _resolve_provider_defaults(args: argparse.Namespace) -> tuple[str, str, str]:
+    if args.provider == "anthropic":
+        model = args.model if args.model is not None else _DEFAULT_ANTHROPIC_MODEL
+        base_url = args.base_url if args.base_url is not None else DEFAULT_ANTHROPIC_BASE_URL
+        api_key_env = (
+            args.api_key_env if args.api_key_env is not None else _DEFAULT_ANTHROPIC_API_KEY_ENV
+        )
+        return model, base_url, api_key_env
+    model = args.model if args.model is not None else _DEFAULT_MODEL
+    base_url = args.base_url if args.base_url is not None else _DEFAULT_BASE_URL
+    api_key_env = args.api_key_env if args.api_key_env is not None else _DEFAULT_API_KEY_ENV
+    return model, base_url, api_key_env
 
 
 def _add_common_extraction_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--schema", required=True, help="Path to the JSON extraction schema file.")
     parser.add_argument(
-        "--model", default=_DEFAULT_MODEL, help="Model identifier for LLM strategy."
+        "--provider",
+        choices=["openai", "anthropic"],
+        default="openai",
+        help="LLM provider strategy backend (default: openai).",
+    )
+    parser.add_argument(
+        "--model",
+        default=None,
+        help=(
+            "Model identifier (default: gpt-4o-mini for openai, claude-sonnet-4-5 for anthropic)."
+        ),
     )
     parser.add_argument(
         "--base-url",
-        default=_DEFAULT_BASE_URL,
-        help="OpenAI-compatible endpoint base URL.",
+        default=None,
+        help=(
+            "Provider endpoint base URL (default: https://api.openai.com/v1 for openai, "
+            "https://api.anthropic.com for anthropic)."
+        ),
     )
     parser.add_argument(
         "--api-key-env",
-        default=_DEFAULT_API_KEY_ENV,
-        help=f"Environment variable holding the API key (default: {_DEFAULT_API_KEY_ENV}).",
+        default=None,
+        help=(
+            "Environment variable holding the API key "
+            "(default: STRUCTA_MAESTRO_API_KEY for openai, ANTHROPIC_API_KEY for anthropic)."
+        ),
+    )
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=DEFAULT_ANTHROPIC_MAX_TOKENS,
+        help=(
+            f"Maximum output tokens for Anthropic Messages API "
+            f"(default: {DEFAULT_ANTHROPIC_MAX_TOKENS})."
+        ),
     )
     parser.add_argument(
         "--max-file-mb",
@@ -179,6 +225,9 @@ def _build_strategy_and_limits(
     args: argparse.Namespace,
     *,
     api_key_val: str,
+    api_key_env: str,
+    model: str,
+    base_url: str,
     strategy_override: ExtractionStrategy | None,
 ) -> tuple[ExtractionStrategy, DocumentLimits]:
     max_file_bytes = (
@@ -198,12 +247,23 @@ def _build_strategy_and_limits(
         return strategy_override, limits
     if not api_key_val.strip():
         raise ConfigurationError(
-            f"Configuration error: environment variable '{args.api_key_env}' is not set."
+            f"Configuration error: environment variable '{api_key_env}' is not set."
         )
+    if args.provider == "anthropic":
+        strategy: ExtractionStrategy = AnthropicLLMStrategy(
+            model=model,
+            api_key=api_key_val,
+            base_url=base_url,
+            max_tokens=args.max_tokens,
+            structured_output_mode=args.structured_output_mode,
+            retry_policy=retry_policy,
+            input_budget=input_budget,
+        )
+        return strategy, limits
     strategy = OpenAICompatibleLLMStrategy(
-        model=args.model,
+        model=model,
         api_key=api_key_val,
-        base_url=args.base_url,
+        base_url=base_url,
         structured_output_mode=args.structured_output_mode,
         retry_policy=retry_policy,
         input_budget=input_budget,
@@ -234,7 +294,8 @@ def run_cli(
         err.write(f"Unsupported command: {args.command}\n")
         return 1
 
-    api_key_val = os.environ.get(args.api_key_env, "")
+    resolved_model, resolved_base_url, resolved_api_key_env = _resolve_provider_defaults(args)
+    api_key_val = os.environ.get(resolved_api_key_env, "")
     secrets_to_scrub = (api_key_val,) if api_key_val else ()
 
     if args.command == "extract":
@@ -259,6 +320,9 @@ def run_cli(
             strategy, limits = _build_strategy_and_limits(
                 args,
                 api_key_val=api_key_val,
+                api_key_env=resolved_api_key_env,
+                model=resolved_model,
+                base_url=resolved_base_url,
                 strategy_override=strategy_override,
             )
             doc_target: str | DocumentInput
@@ -357,6 +421,9 @@ def run_cli(
         strategy, limits = _build_strategy_and_limits(
             args,
             api_key_val=api_key_val,
+            api_key_env=resolved_api_key_env,
+            model=resolved_model,
+            base_url=resolved_base_url,
             strategy_override=strategy_override,
         )
         discovered_paths = discover_batch_documents(args.inputs, recursive=args.recursive)

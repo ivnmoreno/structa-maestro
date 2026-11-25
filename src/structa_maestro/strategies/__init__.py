@@ -10,6 +10,10 @@ from structa_maestro.strategies.base import (
     ProposedRecord,
     StrategyOutput,
 )
+from structa_maestro.strategies.llm_anthropic import (
+    AnthropicLLMStrategy,
+    AsyncAnthropicLLMStrategy,
+)
 from structa_maestro.strategies.llm_openai_compat import (
     AsyncOpenAICompatibleLLMStrategy,
     OpenAICompatibleLLMStrategy,
@@ -20,6 +24,8 @@ from structa_maestro.strategies.testing import (
 )
 
 __all__ = [
+    "AnthropicLLMStrategy",
+    "AsyncAnthropicLLMStrategy",
     "AsyncDeterministicTestStrategy",
     "AsyncExtractionStrategy",
     "AsyncOpenAICompatibleLLMStrategy",

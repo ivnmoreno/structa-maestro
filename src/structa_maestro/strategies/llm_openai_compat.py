@@ -117,6 +117,128 @@ def _describe_field_spec(spec: FieldSpec) -> dict[str, Any]:
     return desc
 
 
+def parse_extraction_records_envelope(
+    parsed: Any,
+    schema: ExtractionSchema,
+    *,
+    warnings: list[DiagnosticIssue] | None = None,
+    partial: bool = False,
+    strategy_label: str = "LLM",
+) -> StrategyOutput:
+    """Parse a canonical `{"records": [...]}` model JSON dictionary into StrategyOutput."""
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("records"), list):
+        return StrategyOutput(
+            records=(),
+            failed=True,
+            errors=(
+                DiagnosticIssue(
+                    code="malformed_model_output",
+                    severity=IssueSeverity.ERROR,
+                    stage=PipelineStage.EXTRACTION,
+                    message="Model output JSON must contain a top-level 'records' array.",
+                ),
+            ),
+            warnings=tuple(warnings) if warnings else (),
+            default_confidence_method="llm-self-assessment",
+        )
+
+    records: list[ProposedRecord] = []
+    errors: list[DiagnosticIssue] = []
+    out_warnings = list(warnings) if warnings else []
+
+    for idx, raw_rec in enumerate(parsed["records"], start=1):
+        if not isinstance(raw_rec, dict) or not isinstance(raw_rec.get("fields"), dict):
+            partial = True
+            errors.append(
+                DiagnosticIssue(
+                    code="malformed_record",
+                    severity=IssueSeverity.ERROR,
+                    stage=PipelineStage.EXTRACTION,
+                    message=f"Record #{idx} in model output was malformed and skipped.",
+                )
+            )
+            continue
+
+        proposed_fields: dict[str, ProposedField] = {}
+        rec_partial = False
+        rec_errors: list[DiagnosticIssue] = []
+
+        for fname, fval in raw_rec["fields"].items():
+            if not isinstance(fname, str):
+                continue
+            spec = schema.fields.get(fname)
+            if isinstance(fval, dict) and ("presence" in fval or "value" in fval):
+                raw_presence = fval.get("presence", "present")
+                presence = (
+                    FieldPresence.MISSING
+                    if raw_presence == FieldPresence.MISSING.value
+                    else FieldPresence.PRESENT
+                )
+                value = (
+                    None
+                    if presence == FieldPresence.MISSING
+                    else coerce_llm_json_value(fval.get("value"), spec)
+                )
+                conf = fval.get("confidence")
+                conf_val = (
+                    float(conf)
+                    if isinstance(conf, (int, float)) and not isinstance(conf, bool)
+                    else None
+                )
+                ambiguous = bool(fval.get("ambiguous", False))
+                ev_list: list[ProposedEvidence] = []
+                raw_ev = fval.get("evidence", [])
+                if isinstance(raw_ev, list):
+                    for ev_item in raw_ev:
+                        if isinstance(ev_item, dict) and isinstance(ev_item.get("quote"), str):
+                            ev_list.append(
+                                ProposedEvidence(
+                                    quote=ev_item["quote"],
+                                    relationship=str(ev_item.get("relationship", "direct")),
+                                )
+                            )
+                        elif isinstance(ev_item, str):
+                            ev_list.append(ProposedEvidence(quote=ev_item))
+                proposed_fields[fname] = ProposedField(
+                    presence=presence,
+                    value=value,
+                    confidence=conf_val,
+                    confidence_method="llm-self-assessment",
+                    evidence=tuple(ev_list),
+                    ambiguous=ambiguous,
+                )
+            else:
+                proposed_fields[fname] = ProposedField(
+                    presence=FieldPresence.PRESENT,
+                    value=coerce_llm_json_value(fval, spec),
+                    confidence=None,
+                    confidence_method="llm-self-assessment",
+                )
+
+        records.append(
+            ProposedRecord(
+                fields=proposed_fields,
+                partial=rec_partial,
+                errors=tuple(rec_errors),
+            )
+        )
+
+    _logger.debug(
+        "%s parsed %d record(s) with partial=%s",
+        strategy_label,
+        len(records),
+        partial,
+    )
+    return StrategyOutput(
+        records=tuple(records),
+        partial=partial,
+        failed=bool(errors) and not records,
+        errors=tuple(errors),
+        warnings=tuple(out_warnings),
+        default_confidence_method="llm-self-assessment",
+    )
+
+
 @dataclass(slots=True)
 class _PreparedLLMCall:
     endpoint: str
@@ -611,105 +733,12 @@ class _BaseOpenAICompatibleLLMStrategy:
                 )
             )
 
-        if not isinstance(parsed, dict) or not isinstance(parsed.get("records"), list):
-            return self._failed_output(
-                "malformed_model_output",
-                "Model output JSON must contain a top-level 'records' array.",
-            )
-
-        records: list[ProposedRecord] = []
-        errors: list[DiagnosticIssue] = []
-
-        for idx, raw_rec in enumerate(parsed["records"], start=1):
-            if not isinstance(raw_rec, dict) or not isinstance(raw_rec.get("fields"), dict):
-                partial = True
-                errors.append(
-                    DiagnosticIssue(
-                        code="malformed_record",
-                        severity=IssueSeverity.ERROR,
-                        stage=PipelineStage.EXTRACTION,
-                        message=f"Record #{idx} in model output was malformed and skipped.",
-                    )
-                )
-                continue
-
-            proposed_fields: dict[str, ProposedField] = {}
-            rec_partial = False
-            rec_errors: list[DiagnosticIssue] = []
-
-            for fname, fval in raw_rec["fields"].items():
-                if not isinstance(fname, str):
-                    continue
-                spec = schema.fields.get(fname)
-                if isinstance(fval, dict) and ("presence" in fval or "value" in fval):
-                    raw_presence = fval.get("presence", "present")
-                    presence = (
-                        FieldPresence.MISSING
-                        if raw_presence == FieldPresence.MISSING.value
-                        else FieldPresence.PRESENT
-                    )
-                    value = (
-                        None
-                        if presence == FieldPresence.MISSING
-                        else coerce_llm_json_value(fval.get("value"), spec)
-                    )
-                    conf = fval.get("confidence")
-                    conf_val = (
-                        float(conf)
-                        if isinstance(conf, (int, float)) and not isinstance(conf, bool)
-                        else None
-                    )
-                    ambiguous = bool(fval.get("ambiguous", False))
-                    ev_list: list[ProposedEvidence] = []
-                    raw_ev = fval.get("evidence", [])
-                    if isinstance(raw_ev, list):
-                        for ev_item in raw_ev:
-                            if isinstance(ev_item, dict) and isinstance(ev_item.get("quote"), str):
-                                ev_list.append(
-                                    ProposedEvidence(
-                                        quote=ev_item["quote"],
-                                        relationship=str(ev_item.get("relationship", "direct")),
-                                    )
-                                )
-                            elif isinstance(ev_item, str):
-                                ev_list.append(ProposedEvidence(quote=ev_item))
-                    proposed_fields[fname] = ProposedField(
-                        presence=presence,
-                        value=value,
-                        confidence=conf_val,
-                        confidence_method="llm-self-assessment",
-                        evidence=tuple(ev_list),
-                        ambiguous=ambiguous,
-                    )
-                else:
-                    proposed_fields[fname] = ProposedField(
-                        presence=FieldPresence.PRESENT,
-                        value=coerce_llm_json_value(fval, spec),
-                        confidence=None,
-                        confidence_method="llm-self-assessment",
-                    )
-
-            records.append(
-                ProposedRecord(
-                    fields=proposed_fields,
-                    partial=rec_partial,
-                    errors=tuple(rec_errors),
-                )
-            )
-
-        _logger.debug(
-            "%s parsed %d record(s) with partial=%s",
-            type(self).__name__,
-            len(records),
-            partial,
-        )
-        return StrategyOutput(
-            records=tuple(records),
+        return parse_extraction_records_envelope(
+            parsed,
+            schema,
+            warnings=warnings,
             partial=partial,
-            failed=bool(errors) and not records,
-            errors=tuple(errors),
-            warnings=tuple(warnings),
-            default_confidence_method="llm-self-assessment",
+            strategy_label=type(self).__name__,
         )
 
     @staticmethod

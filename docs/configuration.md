@@ -19,10 +19,12 @@ Additional built-in stdlib parser safety controls (always enabled with zero exte
 
 ## External Model Provider Configuration
 
-When using `OpenAICompatibleLLMStrategy`:
+When using `OpenAICompatibleLLMStrategy` / `AsyncOpenAICompatibleLLMStrategy` or `AnthropicLLMStrategy` / `AsyncAnthropicLLMStrategy`:
 
-- **Endpoint**: Configure `base_url` to any OpenAI-compatible Chat Completions endpoint (e.g., `https://api.openai.com/v1`, Azure OpenAI proxy, or local Ollama/vLLM server).
-- **Credentials**: Supply credentials through environment variables (`STRUCTA_MAESTRO_API_KEY` by default in CLI) or `SecretValue`. The CLI intentionally does not accept raw API keys as flags to prevent leakage into shell history or process listings.
+- **Endpoints**:
+  - OpenAI-compatible: configure `base_url` (default `https://api.openai.com/v1`) for OpenAI, Azure OpenAI proxies, vLLM, LiteLLM, or Ollama.
+  - Anthropic Messages API: configure `base_url` (default `https://api.anthropic.com`; `/v1/messages` is resolved automatically without duplicating `/v1`), `max_tokens` (default `4096`), `temperature` (`0.0`–`1.0`), and `anthropic_version` (default `"2023-06-01"`).
+- **Credentials**: Supply credentials through environment variables (`STRUCTA_MAESTRO_API_KEY` for OpenAI or `ANTHROPIC_API_KEY` for Anthropic in CLI `--provider anthropic`) or `SecretValue`. The CLI intentionally does not accept raw API keys as flags to prevent leakage into shell history or process listings, and `sanitize_message` scrubs `Bearer`, `sk-...` (including `sk-ant-...`), `api_key`, `authorization`, and `x-api-key` patterns.
 - **Data Transmission Notice**: Prepared text extracted from the submitted document is transmitted to the configured endpoint. Review your provider's retention and compliance terms before sending personal, financial, or confidential records.
 - **Structured Output Modes (`StructuredOutputMode`)**:
   - `strict_with_fallback` *(default)*: Compiles `ExtractionSchema` into a strict closed `json_schema` response format (`additionalProperties: false`) and automatically falls back once to `json_object` with warning `structured_output_fallback` if the schema sets `allow_additional_fields=True` or the endpoint rejects strict schema mode.
@@ -79,10 +81,10 @@ strategy = OpenAICompatibleLLMStrategy(
 
 ### Async HTTP Client Lifecycle & FastAPI Lifespan Guidance
 
-When using `AsyncOpenAICompatibleLLMStrategy` in async web services (such as FastAPI or Starlette):
+When using `AsyncOpenAICompatibleLLMStrategy` or `AsyncAnthropicLLMStrategy` in async web services (such as FastAPI or Starlette):
 
-- **Shared Lifespan Client (Recommended for Services)**: Create one `httpx.AsyncClient(timeout=60.0)` during application startup/lifespan, pass it via `http_client=client`, and close it on application shutdown. `AsyncOpenAICompatibleLLMStrategy` will never close a caller-injected client.
-- **Scoped Pooled Context (Recommended for Scripts & Batch Jobs)**: Enter `async with AsyncOpenAICompatibleLLMStrategy(...) as strategy:` to pool a single strategy-owned `httpx.AsyncClient` across concurrent `aextract_batch` calls (nested `async with` is reference-counted and `await strategy.aclose()` is idempotent).
+- **Shared Lifespan Client (Recommended for Services)**: Create one `httpx.AsyncClient(timeout=60.0)` during application startup/lifespan, pass it via `http_client=client`, and close it on application shutdown. Neither async strategy will ever close a caller-injected client.
+- **Scoped Pooled Context (Recommended for Scripts & Batch Jobs)**: Enter `async with AsyncOpenAICompatibleLLMStrategy(...) as strategy:` (or `async with AsyncAnthropicLLMStrategy(...) as strategy:`) to pool a single strategy-owned `httpx.AsyncClient` across concurrent `aextract_batch` calls (nested `async with` is reference-counted and `await strategy.aclose()` is idempotent).
 - **Standalone One-Off Calls**: Calling `await aextract(...)` outside `async with` without an injected `http_client` safely creates and closes a per-call `httpx.AsyncClient` so sockets never leak.
 - **Task Cancellation**: `asyncio.CancelledError` is never swallowed by `aextract`, `aextract_batch`, or `AsyncOpenAICompatibleLLMStrategy`; cancelling an `aextract_batch` task cancels and awaits all active child tasks cleanly before propagating `CancelledError`.
 
