@@ -1,6 +1,6 @@
 # Formal Assurance Layer (`formal/`)
 
-`structa-maestro` includes an independent **Lean 4** formal specification and theorem-proving layer under `formal/` that formally specifies selected invariants of **Canonical Output Record Contract v1.0** and complements them with an independent two-layer Python-to-Lean conformance suite.
+`structa-maestro` includes an independent **Lean 4** formal specification and theorem-proving layer under `formal/` that formally specifies selected invariants of **Canonical Output Record Contract v1.0**, **Schema Well-Formedness** (`ExtractionSchema`, `FieldSpec`, `FieldConstraints`, `ExtractionCardinality`), and **Deterministic Validation Semantics** (`DeterministicValidator`) and complements them with an independent two-layer Python-to-Lean conformance suite.
 
 > [!IMPORTANT]
 > **Architectural Principle**: Structa uses deterministic processing and empirical testing to establish observed implementation behavior, while formal verification establishes mathematical properties of explicitly defined domain models. Both contribute to assurance, and neither is misrepresented as proof of the factual correctness of extracted information.
@@ -11,7 +11,7 @@
 
 ```mermaid
 flowchart TD
-    L1["Layer 1: Lean 4 Machine-Checked Model Proofs (formal/StructaFormal/)\n46 named theorems across Contract v1.0 & assembly rules\nwarningAsError=true + Lean.Kernel.Environment.replay (908 decls) + Lean.collectAxioms"]
+    L1["Layer 1: Lean 4 Machine-Checked Model Proofs (formal/StructaFormal/)\n78 named theorems across Contract v1.0, Schema Well-Formedness & Deterministic Validation\nwarningAsError=true + Lean.Kernel.Environment.replay (1521 decls) + Lean.collectAxioms"]
     L2["Layer 2: Two-Layer Python-to-Lean Conformance (tests/conformance/)\nAlways-on Python + Hypothesis tests AND JSONL Lean Oracle differential checks"]
     L3["Layer 3: Conventional Deterministic Suites (tests/)\nUnit, contract, serialization round-trip, parser, security, resilience & CLI suites (>=80% cov)"]
     L4["Layer 4: Empirical Golden Evaluation (evals/)\n50-case synthetic golden corpus regression gate (0.0000 baseline delta)"]
@@ -27,7 +27,7 @@ flowchart TD
 - **Python remains the sole runtime language**: `structa_maestro` has **zero** Lean runtime dependencies, **zero** FFI bridges, and **zero** Lean background services.
 - **Zero consumer impact**: Ordinary users installing `structa-maestro` from PyPI wheels or source distributions never need Lean or Lake installed; `formal/` is strictly excluded from both built wheels and source distributions (`sdist`).
 - **Standalone Lake project**: `formal/` is pinned to `leanprover/lean4:v4.36.0` (`formal/lean-toolchain`) with **zero external Lean dependencies** (no Mathlib), strict `warningAsError = true` compilation, full kernel proof replay (`Lean.Kernel.Environment.replay`), and a programmatic `Lean.collectAxioms` theorem audit (`lake test`).
-- **Contract v1.0 unchanged**: The formal layer faithfully mirrors the authoritative Python implementation (`contracts/models.py`, `contracts/enums.py`, `validation/validator.py`, `confidence/normalizer.py`, `provenance/associator.py`, `builder/result_builder.py`) without altering Contract v1.0 schemas or runtime APIs.
+- **Contract v1.0 unchanged**: The formal layer faithfully mirrors the authoritative Python implementation (`contracts/models.py`, `contracts/enums.py`, `schema/models.py`, `validation/validator.py`, `confidence/normalizer.py`, `provenance/associator.py`, `builder/result_builder.py`) without altering Contract v1.0 schemas or runtime APIs.
 
 ---
 
@@ -35,7 +35,7 @@ flowchart TD
 
 | Module | Authoritative Python Source | Formalized Scope |
 | --- | --- | --- |
-| `Enums.lean` | `contracts/enums.py` | 7 Contract v1.0 sum types (`FieldType`, `ProcessingStatus`, `ValidationStatus`, `FieldPresence`, `EvidenceRelationship`, `IssueSeverity`, `PipelineStage`) + string codecs |
+| `Enums.lean` | `contracts/enums.py` | 8 Contract v1.0 & schema sum types (`FieldType`, `ExtractionCardinality`, `ProcessingStatus`, `ValidationStatus`, `FieldPresence`, `EvidenceRelationship`, `IssueSeverity`, `PipelineStage`) + string codecs |
 | `Models.lean` | `contracts/models.py` | All 10 Contract v1.0 structures (`SourceMetadata`, `SchemaMetadata`, `SourceLocation`, `ProvenanceEvidence`, `ConfidenceAssessment`, `DiagnosticIssue`, `ValidationOutcome`, `ExtractedField`, `ExtractedRecord`, `ExtractionResult`), `Valid* : T → Prop`, decidable `isValid* : T → Bool`, and `isValid*_iff` soundness/completeness bridges |
 | `FieldInvariants.lean` | `contracts/models.py` | Missing-has-no-value, missing vs. explicit-null separation, present null/non-null support, presence-validation independence |
 | `ValidationInvariants.lean` | `contracts/models.py`, `validation/validator.py` | Structural `ValidationOutcome` invariants (faithfully permitting `ValidationOutcome(INVALID, [])` per `models.py`) + `DeterministicValidator` outcome construction (`INVALID ↔ errors ≠ []`, `VALID ↔ errors = []`, `NOT_VALIDATED` on pre-validation empty failures) |
@@ -43,8 +43,11 @@ flowchart TD
 | `ProvenanceInvariants.lean` | `contracts/models.py`, `provenance/associator.py` | Source-document binding when `source` is present, `SourceLocation` bounds/span-ordering/independent optionality, `UNVERIFIED` vs. verified separation, identity-vs-location separation, `ProvenanceAssociator` foreign-doc rejection & unlocated classification |
 | `IdentityInvariants.lean` | `contracts/models.py` | Explicit `"1.0"` contract version, pairwise unique `record_id`s, non-empty identifiers, extraction-vs-schema identity separation |
 | `StatusAssembly.lean` | `contracts/models.py`, `builder/result_builder.py` | Processing-vs-validation independence + exact `ResultBuilder` assembly rules (`build_failed`, `PARTIAL` never promoted to `COMPLETED`, `strategy_output.failed=True` with preserved records, record-level `FAILED` independence) |
-| `Oracle.lean` / `OracleMain.lean` | Dev/CI conformance only | Standalone JSONL CLI (`structa-formal-oracle`) evaluating Lean's actual decidable `isValid*` and assembly functions on Python-generated Contract v1.0 test vectors |
-| `AxiomAuditMain.lean` | Lake `testDriver` | Replays all `StructaFormal` declarations from scratch via `Lean.Kernel.Environment.replay` and programmatically verifies all 46 named theorems use ONLY Lean's standard core axioms (`propext`, `Classical.choice`, `Quot.sound`) with zero `sorryAx` |
+| `SchemaModels.lean` | `schema/models.py` | `RuntimeValue` (tagged lossless value ADT + `runtimeValueEq`), `FieldConstraints` (exact `Rat` bounds, lengths, items, `allowedValues`), recursive `FieldSpec` + `fieldDepth`, `ExtractionSchema`, `Valid*`/`isValid*` predicates, and `isValid*_iff` soundness/completeness bridges |
+| `SchemaInvariants.lean` | `schema/models.py` | 10 schema well-formedness theorems: non-blank identities, non-empty unique fields & depth bounds, constraint ordering/non-negativity/non-empty enums, type-to-constraint compatibility, `OBJECT` `properties` & `ARRAY` `items` rules, `SINGLE`/`MULTIPLE` & `allow_additional_fields` modeling |
+| `DeterministicValidation.lean` | `validation/validator.py` | 19 deterministic validation theorems: purity/determinism, diagnostic soundness (`ERROR` + `VALIDATION` + `ValidValidationOutcome`), record `VALID ↔ ∀ field VALID` (single-field/structural scope), presence/nullability separation, strict non-coercion (`"42"` vs `INTEGER`, `bool` vs `INTEGER`/`DECIMAL`, `datetime` vs `DATE`, non-finite decimal), exact `int` for `DECIMAL`, `allowed_values` bool/int separation, extra-field handling (`allow_additional_fields` + `MISSING` extra), and `SINGLE`/`MULTIPLE`/pre-validation result cardinality |
+| `Oracle.lean` / `OracleMain.lean` | Dev/CI conformance only | Standalone JSONL CLI (`structa-formal-oracle`) evaluating Lean's actual decidable `isValid*`, schema well-formedness, deterministic record/cardinality validation, and assembly functions on Python-generated test vectors |
+| `AxiomAuditMain.lean` | Lake `testDriver` | Replays all `StructaFormal` declarations from scratch via `Lean.Kernel.Environment.replay` and programmatically verifies all **78** named theorems (46 Contract v1.0 + 32 Schema & Validation) use ONLY Lean's standard core axioms (`propext`, `Classical.choice`, `Quot.sound`) with zero `sorryAx` |
 
 ---
 
@@ -60,9 +63,11 @@ Structa explicitly distinguishes **four independent assurance levels** and never
 | Provenance document binding, `SourceLocation` bounds/ordering/optionality, `UNVERIFIED` separation, `ProvenanceAssociator` rules | **Proved** (`ProvenanceInvariants.lean`) | **Verified** (Layer 1 + Layer 2) | `tests/unit/test_provenance.py` | Structural integrity only (not semantic quote truth) |
 | Contract `"1.0"`, unique `record_id`, schema vs. extraction identity | **Proved** (`IdentityInvariants.lean`) | **Verified** (Layer 1 + Layer 2) | `tests/contract/` | Complete within Contract v1.0 model |
 | Processing vs. validation status independence & `ResultBuilder` status assembly | **Proved** (`StatusAssembly.lean`) | **Verified** (exhaustive 64-case result + 16-case record matrices) | `tests/unit/test_result_builder.py` | Complete for status-assembly flags |
-| JSON round-trip serialization, Pydantic v2 binding, CLI, async/batch, telemetry | Out of scope | Out of scope | `tests/contract/`, `tests/property/`, `tests/integration/` | Covered by Python test suites |
-| Document parsers (TXT/PDF/DOCX/HTML/Markdown/EML) | **Explicitly out of scope** | N/A | `tests/document_processing/`, `tests/security/` | Not formally verified |
-| LLM strategies, external providers, extraction/factual accuracy, regexes, full cross-field execution, calibration algorithms | **Explicitly out of scope** | N/A | `tests/integration/`, `evals/` (50-case golden suite) | Empirical testing & evaluation only |
+| Schema well-formedness (`ExtractionSchema`, `FieldSpec`, `FieldConstraints`, type compatibility, `OBJECT`/`ARRAY`, `max_depth`, cardinality & `allow_additional_fields`) | **Proved** (`SchemaModels.lean`, `SchemaInvariants.lean`) | **Verified** (20 curated vectors + Hypothesis + Lean oracle) | `tests/unit/test_schema_interpretation.py` | Pydantic `from_pydantic` introspection out of scope |
+| Deterministic validation semantics (determinism, strict non-coercion, presence/nullability, extra fields, nested recursion, diagnostic soundness, `SINGLE`/`MULTIPLE` cardinality) | **Proved** (`DeterministicValidation.lean`) | **Verified** (curated + Hypothesis + Lean oracle comparing statuses & exact `(field_path, code)` lists) | `tests/unit/test_validation.py` | Regex abstracted via `PatternMatcher`; cross-field rules (`rules = ()`) out of scope |
+| JSON round-trip serialization, Pydantic v2 `from_pydantic` / binding, CLI, async/batch, telemetry | Out of scope | Out of scope | `tests/contract/`, `tests/property/`, `tests/integration/` | Covered by Python test suites |
+| Arbitrary regex execution (`re.search`), full cross-field rule execution (`validation/cross_field.py`), document parsers (TXT/PDF/DOCX/HTML/Markdown/EML) | **Explicitly out of scope** | Regex abstracted as `PatternMatcher` oracle parameter | `tests/unit/test_cross_field_validation.py`, `tests/document_processing/`, `tests/security/` | Not formally verified |
+| LLM strategies, external providers, extraction/factual accuracy, calibration algorithms | **Explicitly out of scope** | N/A | `tests/integration/`, `evals/` (50-case golden suite) | Empirical testing & evaluation only |
 
 ---
 
@@ -71,9 +76,10 @@ Structa explicitly distinguishes **four independent assurance levels** and never
 > [!NOTE]
 > A Lean 4 proof establishes mathematical properties of the formal specification in `formal/StructaFormal/`, **not** automatic runtime equivalence of Python/Pydantic execution. Empirical agreement between Lean and Python is enforced by the two-layer conformance suite (`tests/conformance/`).
 
-1. **Exact rational vs. IEEE-754 floating-point confidence**: `ConfidenceInvariants.lean` models finite confidence values using Lean's exact rational numbers (`Rat`) and represents `NaN`/`±inf`/non-numeric inputs explicitly via `ConfidenceInput`. Python's `ConfidenceNormalizer` rounds valid finite floats via `round(numeric, 6)` and operates on IEEE-754 floats; `tests/conformance/` exercises IEEE-754 edge cases (`0.0`, `1.0`, `NaN`, `+inf`, `-inf`, booleans, out-of-range floats) directly against Python and the Lean oracle.
-2. **Abstract field values**: `ExtractedField.value` is modeled as `FieldValue.nullValue | FieldValue.nonNull reprTag` because Contract v1.0's structural field invariant depends solely on null-vs-non-null distinction, not arbitrary dynamic Python object types.
-3. **No semantic truth claims**: Proving that a provenance entry references `source.document_id` and has valid `char_start ≤ char_end` never proves that the extracted value is factually true in the real world.
+1. **Exact rational vs. IEEE-754 floating-point numerics**: `ConfidenceInvariants.lean`, `SchemaModels.lean`, and `DeterministicValidation.lean` model finite decimal/confidence values using Lean's exact rational numbers (`Rat`) and represent `NaN`/`±inf`/non-numeric inputs explicitly (`ConfidenceInput`, `RuntimeValue.nonFiniteDecVal`). Python operates on `Decimal` and IEEE-754 `float`; `tests/conformance/` exercises `Decimal`, `int`, `bool`, and `NaN`/`±inf` edge cases directly against Python and the Lean oracle.
+2. **Abstract regular-expression matching**: `DeterministicValidation.lean` parameterizes string `pattern` matching via a pure oracle `PatternMatcher := String → String → Bool` (`pattern_results` in `Oracle.lean`) rather than formalizing Python's `re` engine.
+3. **Single-field & structural validation scope**: `validate_record_valid_iff_all_fields_valid` holds for single-field and nested structural validation (`schema.rules = ()`). Declarative cross-field rule execution (`validation/cross_field.py`) and Pydantic `from_pydantic` introspection remain explicitly out of scope for this increment.
+4. **No semantic truth claims**: Proving schema well-formedness, deterministic validation, or provenance document binding never proves that an extracted value is factually true in the real world.
 
 ---
 
@@ -101,7 +107,7 @@ STRUCTA_REQUIRE_LEAN_ORACLE=1 pytest tests/conformance/ -v
 
 ### Continuous Integration & Release Gates
 
-- **Pull Requests & `main`**: `.github/workflows/formal-assurance.yml` installs the pinned Lean toolchain, runs `lake build` (`warningAsError = true`), runs `lake test` (`structa-axiom-audit` kernel replay + 46-theorem axiom audit), and runs `STRUCTA_REQUIRE_LEAN_ORACLE=1 pytest tests/conformance/ -v`.
+- **Pull Requests & `main`**: `.github/workflows/formal-assurance.yml` installs the pinned Lean toolchain, runs `lake build` (`warningAsError = true`), runs `lake test` (`structa-axiom-audit` kernel replay + 78-theorem axiom audit), and runs `STRUCTA_REQUIRE_LEAN_ORACLE=1 pytest tests/conformance/ -v`.
 - **Release Qualification**: `.github/workflows/release.yml` gates PyPI publishing on both `qualify` and `formal-assurance` passing.
 
 ## Related Documents

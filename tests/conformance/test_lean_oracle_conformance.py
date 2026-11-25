@@ -18,6 +18,8 @@ import json
 import os
 import shutil
 import subprocess
+from datetime import UTC, date, datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -35,16 +37,35 @@ from tests.conformance.reference_model import (
     formal_assemble_record_status,
     formal_make_result_cardinality_status,
 )
+from tests.conformance.schema_reference import (
+    build_schema_well_formed_vectors,
+    build_validation_reference_schema,
+    encode_extraction_schema,
+    encode_record_fields,
+    instantiate_python_schema_from_vector,
+)
 
 from structa_maestro.confidence.normalizer import ConfidenceNormalizer
-from structa_maestro.contracts.enums import EvidenceRelationship, FieldPresence
+from structa_maestro.contracts.enums import (
+    EvidenceRelationship,
+    ExtractionCardinality,
+    FieldPresence,
+    FieldType,
+    IssueSeverity,
+    PipelineStage,
+    ValidationStatus,
+)
 from structa_maestro.contracts.models import (
     ConfidenceAssessment,
+    DiagnosticIssue,
     ExtractedField,
     ExtractionResult,
     SourceLocation,
     ValidationOutcome,
 )
+from structa_maestro.exceptions import SchemaDefinitionError
+from structa_maestro.schema.models import ExtractionSchema, FieldConstraints, FieldSpec
+from structa_maestro.validation.validator import DeterministicValidator
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FORMAL_DIR = REPO_ROOT / "formal"
@@ -340,3 +361,376 @@ def test_property_lean_oracle_differential_extracted_field(
     }
     resp = _query_lean_oracle([{"kind": "extracted_field", "payload": payload}])[0]
     assert _python_accepts(ExtractedField, payload) is resp["valid"]
+
+
+# ---------------------------------------------------------------------------
+# Spec 013 — Schema Well-Formedness & Deterministic Validation Differential Checks
+# ---------------------------------------------------------------------------
+
+
+def _python_accepts_schema(vec: dict[str, Any]) -> bool:
+    try:
+        instantiate_python_schema_from_vector(vec)
+        return True
+    except (SchemaDefinitionError, ValueError):
+        return False
+
+
+def test_lean_oracle_matches_python_schema_well_formedness() -> None:
+    """Differential check of all curated valid/invalid/boundary ExtractionSchema vectors."""
+    vectors = build_schema_well_formed_vectors()
+    requests = [{"kind": "schema_well_formed", "payload": vec} for vec, _ in vectors]
+    responses = _query_lean_oracle(requests)
+
+    for (vec, expected), resp in zip(vectors, responses, strict=True):
+        assert resp["ok"] is True
+        lean_valid = resp["valid"]
+        python_valid = _python_accepts_schema(vec)
+        assert lean_valid is expected, f"Lean mismatch for schema_well_formed: {vec}"
+        assert python_valid is lean_valid, (
+            f"Python/Lean divergence for schema_well_formed: "
+            f"python={python_valid} lean={lean_valid} vec={vec}"
+        )
+
+
+def test_lean_oracle_matches_python_deterministic_validator_curated() -> None:
+    """Differential check of DeterministicValidator.validate_record against Lean oracle.
+
+    Asserts exact agreement on record status, per-field statuses, AND ordered
+    `(field_path, code)` diagnostic error lists across non-coercion, presence/nullability,
+    bounds, allowed_values, nested OBJECT/ARRAY recursion, extra fields, and pattern oracle.
+    """
+    validator = DeterministicValidator()
+    closed_schema = build_validation_reference_schema(allow_additional_fields=False)
+    open_schema = build_validation_reference_schema(allow_additional_fields=True)
+
+    enum_bool_int_schema = ExtractionSchema(
+        schema_id="enum-bool-int",
+        schema_version="1.0",
+        fields={
+            "num_enum": FieldSpec(
+                name="num_enum",
+                field_type=FieldType.DECIMAL,
+                required=True,
+                constraints=FieldConstraints(allowed_values=(Decimal("10.00"),)),
+            ),
+            "int_enum": FieldSpec(
+                name="int_enum",
+                field_type=FieldType.INTEGER,
+                required=True,
+                constraints=FieldConstraints(allowed_values=(1,)),
+            ),
+            "bool_enum": FieldSpec(
+                name="bool_enum",
+                field_type=FieldType.BOOLEAN,
+                required=True,
+                constraints=FieldConstraints(allowed_values=(True,)),
+            ),
+        },
+    )
+
+    pattern_schema = ExtractionSchema.from_dict(
+        {
+            "schema_id": "pattern-check",
+            "schema_version": "1.0",
+            "fields": {
+                "invoice_number": {
+                    "type": "string",
+                    "required": True,
+                    "pattern": r"^INV-\d+$",
+                }
+            },
+        }
+    )
+
+    open_nested_schema = ExtractionSchema.from_dict(
+        {
+            "schema_id": "open-nested",
+            "schema_version": "1.0",
+            "fields": {
+                "vendor": {
+                    "type": "object",
+                    "required": True,
+                    "allow_additional_fields": True,
+                    "properties": {"name": {"type": "string", "required": True}},
+                }
+            },
+        }
+    )
+
+    base_valid: dict[str, tuple[FieldPresence, Any]] = {
+        "code": (FieldPresence.PRESENT, "INV-100"),
+        "count": (FieldPresence.PRESENT, 5),
+        "amount": (FieldPresence.PRESENT, Decimal("42.50")),
+        "active": (FieldPresence.PRESENT, True),
+        "issued": (FieldPresence.PRESENT, date(2026, 1, 15)),
+        "currency": (FieldPresence.PRESENT, "USD"),
+        "note": (FieldPresence.PRESENT, None),
+        "tags": (FieldPresence.PRESENT, ["ops", "billing"]),
+        "vendor": (FieldPresence.PRESENT, {"name": "Acme", "tax_id": None}),
+    }
+
+    cases: list[tuple[ExtractionSchema, dict[str, tuple[FieldPresence, Any]], dict[str, bool]]] = [
+        # Valid baseline & int accepted for DECIMAL
+        (closed_schema, base_valid, {}),
+        (closed_schema, {**base_valid, "amount": (FieldPresence.PRESENT, 100)}, {}),
+        # Non-coercion matrix
+        (closed_schema, {**base_valid, "count": (FieldPresence.PRESENT, "42")}, {}),
+        (closed_schema, {**base_valid, "count": (FieldPresence.PRESENT, True)}, {}),
+        (closed_schema, {**base_valid, "amount": (FieldPresence.PRESENT, False)}, {}),
+        (closed_schema, {**base_valid, "amount": (FieldPresence.PRESENT, Decimal("NaN"))}, {}),
+        (closed_schema, {**base_valid, "amount": (FieldPresence.PRESENT, Decimal("Infinity"))}, {}),
+        (closed_schema, {**base_valid, "amount": (FieldPresence.PRESENT, float("nan"))}, {}),
+        (
+            closed_schema,
+            {
+                **base_valid,
+                "issued": (FieldPresence.PRESENT, datetime(2026, 1, 15, tzinfo=UTC)),
+            },
+            {},
+        ),
+        (closed_schema, {**base_valid, "code": (FieldPresence.PRESENT, object())}, {}),
+        # Presence & nullability separation
+        (closed_schema, {**base_valid, "code": (FieldPresence.MISSING, None)}, {}),
+        (closed_schema, {**base_valid, "note": (FieldPresence.MISSING, None)}, {}),
+        (closed_schema, {**base_valid, "code": (FieldPresence.PRESENT, None)}, {}),
+        # Bounds & allowed_values
+        (
+            closed_schema,
+            {
+                **base_valid,
+                "code": (FieldPresence.PRESENT, "A"),
+                "count": (FieldPresence.PRESENT, 101),
+                "amount": (FieldPresence.PRESENT, Decimal("-1.00")),
+                "currency": (FieldPresence.PRESENT, "GBP"),
+            },
+            {},
+        ),
+        # allowed_values bool vs int & int vs Decimal
+        (
+            enum_bool_int_schema,
+            {
+                "num_enum": (FieldPresence.PRESENT, 10),
+                "int_enum": (FieldPresence.PRESENT, 1),
+                "bool_enum": (FieldPresence.PRESENT, True),
+            },
+            {},
+        ),
+        (
+            enum_bool_int_schema,
+            {
+                "num_enum": (FieldPresence.PRESENT, Decimal("10.01")),
+                "int_enum": (FieldPresence.PRESENT, True),
+                "bool_enum": (FieldPresence.PRESENT, 1),
+            },
+            {},
+        ),
+        # Nested ARRAY & OBJECT recursion + sorted nested extras
+        (
+            closed_schema,
+            {
+                **base_valid,
+                "tags": (FieldPresence.PRESENT, ["ok", "x", 99, "abcd"]),
+                "vendor": (
+                    FieldPresence.PRESENT,
+                    {"z_extra": 1, "a_extra": 2},
+                ),
+            },
+            {},
+        ),
+        (
+            open_nested_schema,
+            {"vendor": (FieldPresence.PRESENT, {"name": "Acme", "extra_nested": 123})},
+            {},
+        ),
+        # Top-level extra fields: closed present (sorted), open present, closed missing
+        (
+            closed_schema,
+            {
+                **base_valid,
+                "z_extra": (FieldPresence.PRESENT, "z"),
+                "a_extra": (FieldPresence.PRESENT, "a"),
+            },
+            {},
+        ),
+        (open_schema, {**base_valid, "extra": (FieldPresence.PRESENT, "ok")}, {}),
+        (closed_schema, {**base_valid, "ghost_extra": (FieldPresence.MISSING, None)}, {}),
+        # Pattern oracle pass / fail
+        (
+            pattern_schema,
+            {"invoice_number": (FieldPresence.PRESENT, "INV-42")},
+            {"invoice_number": True},
+        ),
+        (
+            pattern_schema,
+            {"invoice_number": (FieldPresence.PRESENT, "BAD")},
+            {"invoice_number": False},
+        ),
+    ]
+
+    requests = [
+        {
+            "kind": "validate_record",
+            "payload": {
+                "schema": encode_extraction_schema(schema),
+                "record_id": "rec-1",
+                "fields": encode_record_fields(fields),
+                "pattern_results": pat_results,
+            },
+        }
+        for schema, fields, pat_results in cases
+    ]
+    responses = _query_lean_oracle(requests)
+
+    for (schema, fields, _), resp in zip(cases, responses, strict=True):
+        assert resp["ok"] is True
+        py_res = validator.validate_record(fields, schema, record_id="rec-1")
+        py_rec = py_res.record_outcome
+        py_fields = py_res.field_outcomes
+        py_errors = [(e.field_path, e.code) for e in py_rec.errors]
+        lean_errors = [(e["field_path"], e["code"]) for e in resp["errors"]]
+        py_field_statuses = {k: v.status.value for k, v in py_fields.items()}
+
+        assert resp["status"] == py_rec.status.value, (
+            f"Record status mismatch: lean={resp['status']} py={py_rec.status.value}"
+        )
+        assert lean_errors == py_errors, (
+            f"Diagnostic error list mismatch: lean={lean_errors} py={py_errors}"
+        )
+        assert resp["field_statuses"] == py_field_statuses, (
+            f"Field statuses mismatch: lean={resp['field_statuses']} py={py_field_statuses}"
+        )
+
+
+def test_lean_oracle_matches_python_result_cardinality_matrix() -> None:
+    """Exhaustive differential check of validate_result_cardinality against Lean oracle."""
+    validator = DeterministicValidator()
+    dummy_err = DiagnosticIssue(
+        code="err",
+        severity=IssueSeverity.ERROR,
+        stage=PipelineStage.VALIDATION,
+        message="validation error",
+    )
+
+    cases: list[tuple[ExtractionCardinality, list[int], bool, bool]] = []
+    for card in (ExtractionCardinality.SINGLE, ExtractionCardinality.MULTIPLE):
+        for counts in ([], [0], [1], [0, 0], [1, 0], [0, 2, 1]):
+            has_recs = len(counts) > 0
+            for failed_before in (False, True):
+                cases.append((card, counts, has_recs, failed_before))
+
+    requests = [
+        {
+            "kind": "validate_result_cardinality",
+            "payload": {
+                "cardinality": card.value,
+                "record_error_counts": counts,
+                "has_records": has_recs,
+                "failed_before_validation": failed_before,
+            },
+        }
+        for card, counts, has_recs, failed_before in cases
+    ]
+    responses = _query_lean_oracle(requests)
+
+    for (card, counts, has_recs, failed_before), resp in zip(cases, responses, strict=True):
+        assert resp["ok"] is True
+        schema = ExtractionSchema(
+            schema_id="card",
+            schema_version="1.0",
+            fields={"x": FieldSpec(name="x", field_type=FieldType.STRING)},
+            cardinality=card,
+        )
+        rec_outcomes = [
+            ValidationOutcome(
+                status=ValidationStatus.VALID if n == 0 else ValidationStatus.INVALID,
+                errors=tuple(dummy_err for _ in range(n)),
+            )
+            for n in counts
+        ]
+        py_out = validator.validate_result_cardinality(
+            rec_outcomes,
+            schema,
+            has_records=has_recs,
+            failed_before_validation=failed_before,
+        )
+        assert resp["status"] == py_out.status.value
+        assert resp["codes"] == [e.code for e in py_out.errors]
+
+
+_HYPOTHESIS_VALUE_ST = st.one_of(
+    st.none(),
+    st.sampled_from(["", "ok", "INV-1", "a" * 20, "USD", "GBP"]),
+    st.sampled_from([-5, 0, 1, 50, 101]),
+    st.sampled_from([Decimal("-1.5"), Decimal("0.00"), Decimal("10.25"), Decimal("NaN")]),
+    st.booleans(),
+    st.sampled_from([date(2026, 5, 1), datetime(2026, 5, 1, tzinfo=UTC)]),
+    st.sampled_from([[], ["ab"], ["x", 1], ["aa", "bb", "cc", "dd"]]),
+    st.sampled_from([{}, {"name": "Acme"}, {"name": "Acme", "extra": 1}]),
+)
+
+
+@pytest.mark.property
+@settings(max_examples=30, deadline=None)
+@given(
+    allow_additional=st.booleans(),
+    pres_code=st.sampled_from([FieldPresence.PRESENT, FieldPresence.MISSING]),
+    val_code=_HYPOTHESIS_VALUE_ST,
+    val_count=_HYPOTHESIS_VALUE_ST,
+    val_amount=_HYPOTHESIS_VALUE_ST,
+    val_active=_HYPOTHESIS_VALUE_ST,
+    val_issued=_HYPOTHESIS_VALUE_ST,
+    extra_pres=st.one_of(
+        st.none(), st.sampled_from([FieldPresence.PRESENT, FieldPresence.MISSING])
+    ),
+)
+def test_property_lean_oracle_differential_validate_record(
+    allow_additional: bool,
+    pres_code: FieldPresence,
+    val_code: Any,
+    val_count: Any,
+    val_amount: Any,
+    val_active: Any,
+    val_issued: Any,
+    extra_pres: FieldPresence | None,
+) -> None:
+    """Hypothesis differential property check: Python DeterministicValidator == Lean oracle."""
+    schema = build_validation_reference_schema(allow_additional_fields=allow_additional)
+    fields: dict[str, tuple[FieldPresence, Any]] = {
+        "code": (pres_code, None if pres_code == FieldPresence.MISSING else val_code),
+        "count": (FieldPresence.PRESENT, val_count),
+        "amount": (FieldPresence.PRESENT, val_amount),
+        "active": (FieldPresence.PRESENT, val_active),
+        "issued": (FieldPresence.PRESENT, val_issued),
+        "currency": (FieldPresence.PRESENT, "USD"),
+    }
+    if extra_pres is not None:
+        fields["undeclared_x"] = (
+            extra_pres,
+            None if extra_pres == FieldPresence.MISSING else "extra_val",
+        )
+
+    validator = DeterministicValidator()
+    py_res = validator.validate_record(fields, schema, record_id="prop-1")
+    py_rec = py_res.record_outcome
+    py_fields = py_res.field_outcomes
+    resp = _query_lean_oracle(
+        [
+            {
+                "kind": "validate_record",
+                "payload": {
+                    "schema": encode_extraction_schema(schema),
+                    "record_id": "prop-1",
+                    "fields": encode_record_fields(fields),
+                    "pattern_results": {},
+                },
+            }
+        ]
+    )[0]
+
+    assert resp["ok"] is True
+    assert resp["status"] == py_rec.status.value
+    assert [(e["field_path"], e["code"]) for e in resp["errors"]] == [
+        (e.field_path, e.code) for e in py_rec.errors
+    ]
+    assert resp["field_statuses"] == {k: v.status.value for k, v in py_fields.items()}
