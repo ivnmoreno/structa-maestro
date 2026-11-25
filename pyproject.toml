@@ -49,12 +49,16 @@ packages = ["src/structa_maestro"]
 
 [tool.hatch.build.targets.sdist]
 include = [
-    "src/structa_maestro/**",
-    "README.md",
-    "LICENSE",
-    "CHANGELOG.md",
-    "SECURITY.md",
-    "pyproject.toml",
+    "/src/structa_maestro/**",
+    "/README.md",
+    "/LICENSE",
+    "/CHANGELOG.md",
+    "/SECURITY.md",
+    "/pyproject.toml",
+]
+exclude = [
+    "/formal/**",
+    "/evals/**",
 ]
 
 [tool.ruff]

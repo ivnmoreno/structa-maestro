@@ -38,7 +38,7 @@ pip install -e ".[dev]"
 1. **Never commit directly to `main`**: Create a descriptive feature or fix branch off `main` (e.g., `feat/<short-name>`, `fix/<short-name>`, or `docs/<short-name>`).
 2. **Use Conventional Commits**: Follow [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`) with a concise subject line (`<= 72` characters). This repository is configured with Commitizen (`cz_conventional_commits`).
 3. **Keep Documentation Synchronized**: Any change to public APIs, CLI flags, schemas, limits, or security behavior must update the relevant docs (`README.md`, `docs/api.md`, `docs/architecture.md`, `docs/configuration.md`, `CHANGELOG.md`) and examples in the same pull request.
-4. **Ensure CI Passes**: Every PR targeting `main` must pass all mandatory GitHub Actions workflows (`ci.yml`, `security.yml`, `evaluation.yml`, and `compatibility.yml`).
+4. **Ensure CI Passes**: Every PR targeting `main` must pass all mandatory GitHub Actions workflows (`ci.yml`, `formal-assurance.yml`, `security.yml`, `evaluation.yml`, and `compatibility.yml`).
 
 ---
 
@@ -63,7 +63,11 @@ pytest tests/evaluation/ -v
 python -m evals validate-dataset
 python -m evals run --strategy deterministic --baseline evals/baselines/deterministic_v2.0.0.json
 
-# Packaging validation (confirm evals/ is excluded from wheel and sdist)
+# Formal assurance proofs, kernel replay & Python-to-Lean conformance (requires elan / Lean 4)
+(cd formal && lake build && lake test)
+STRUCTA_REQUIRE_LEAN_ORACLE=1 pytest tests/conformance/ -v
+
+# Packaging validation (confirm formal/ and evals/ are excluded from wheel and sdist)
 python -m build
 twine check dist/*
 ```
@@ -83,7 +87,8 @@ See [docs/development.md](docs/development.md) and [docs/TESTING.md](docs/TESTIN
 ## Pull Request Checklist
 
 - [ ] Changes are on a dedicated branch targeting `main`
-- [ ] All unit, integration, contract, security, and evaluation tests pass (`>= 80%` coverage)
+- [ ] All unit, integration, contract, conformance, security, and evaluation tests pass (`>= 80%` coverage)
+- [ ] Lean 4 formal proofs, kernel replay, and axiom audit (`lake test`) pass when modifying Contract `v1.0` or `formal/`
 - [ ] `ruff format --check .`, `ruff check .`, `ruff check --select S src/ evals/`, and `mypy src/ evals/` pass cleanly
 - [ ] Zero regressions on the 50-case offline golden baseline (`evals/baselines/deterministic_v2.0.0.json`)
 - [ ] No API keys, credentials, or real confidential documents included in code, fixtures, or tests

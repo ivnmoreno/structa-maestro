@@ -1,12 +1,14 @@
 # structa-maestro
 
 [![CI](https://github.com/ivnmoreno/structa-maestro/actions/workflows/ci.yml/badge.svg)](https://github.com/ivnmoreno/structa-maestro/actions/workflows/ci.yml)
+[![Formal Assurance](https://github.com/ivnmoreno/structa-maestro/actions/workflows/formal-assurance.yml/badge.svg)](https://github.com/ivnmoreno/structa-maestro/actions/workflows/formal-assurance.yml)
 [![Security](https://github.com/ivnmoreno/structa-maestro/actions/workflows/security.yml/badge.svg)](https://github.com/ivnmoreno/structa-maestro/actions/workflows/security.yml)
 [![Evaluation](https://github.com/ivnmoreno/structa-maestro/actions/workflows/evaluation.yml/badge.svg)](https://github.com/ivnmoreno/structa-maestro/actions/workflows/evaluation.yml)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Code Style: Ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
 [![Type Checked: mypy](https://img.shields.io/badge/type%20checked-mypy-blue.svg)](https://mypy-lang.org/)
+[![Formal Verification: Lean 4](https://img.shields.io/badge/formal%20verification-Lean%204-blueviolet.svg)](docs/formal-assurance.md)
 [![Commitizen friendly](https://img.shields.io/badge/commitizen-friendly-brightgreen.svg)](https://commitizen-tools.github.io/commitizen/)
 
 **Structured Data Extraction Engine** — a reusable Python library (`structa_maestro`) with a minimal thin CLI (`structa-maestro`) that transforms unstructured documents (`TXT`, text-based `PDF`, `DOCX`, `HTML`, `Markdown`, and `EML`) into validated, schema-conforming, provenance-backed canonical records.
@@ -285,9 +287,23 @@ See [docs/development.md](docs/development.md) for subset filtering, repeated-tr
 
 ---
 
+## Formal Assurance Layer (Lean 4 — Dev & CI Only)
+
+`formal/` contains an independent, zero-external-dependency **Lean 4** project (pinned via `formal/lean-toolchain`, excluded from Python wheels and sdists, with **zero runtime dependency** for `structa-maestro` consumers) that machine-checks 46 theorems over **Canonical Output Record Contract v1.0** invariants (field presence/nullability, validation outcomes/diagnostics, confidence bounds/calibration, provenance document binding & `SourceLocation` spans, identity uniqueness, and processing-vs-validation status assembly):
+
+```bash
+cd formal && lake build && lake test
+cd .. && STRUCTA_REQUIRE_LEAN_ORACLE=1 pytest tests/conformance/ -v
+```
+
+See [Formal Assurance Guide](docs/formal-assurance.md) for the complete assurance matrix, formal model scope, assumptions, and explicit non-goals.
+
+---
+
 ## Further Documentation
 
 - [Architecture](docs/architecture.md)
+- [Formal Assurance Layer](docs/formal-assurance.md)
 - [Public API & CLI Reference](docs/api.md)
 - [Configuration & Security](docs/configuration.md)
 - [Development & Quality Gates](docs/development.md)

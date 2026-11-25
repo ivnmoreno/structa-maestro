@@ -22,6 +22,17 @@ pytest --cov=structa_maestro --cov-report=term-missing --cov-fail-under=80
 pytest tests/evaluation/ -v
 ```
 
+### Formal Assurance Checks (Lean 4 + Two-Layer Conformance)
+
+With [`elan`](https://github.com/leanprover/elan) installed (which activates the pinned toolchain in `formal/lean-toolchain` automatically):
+
+```bash
+cd formal && lake build && lake test
+cd .. && STRUCTA_REQUIRE_LEAN_ORACLE=1 pytest tests/conformance/ -v
+```
+
+See [docs/formal-assurance.md](formal-assurance.md) for the assurance matrix, formal model scope, and proof boundaries.
+
 ## Golden Evaluation Harness (`python -m evals`)
 
 The repository-internal `evals/` package (excluded from published wheel and sdist artifacts) hosts a 50-case synthetic golden evaluation corpus spanning 8 business document categories, 3 input formats (`TXT`, `PDF`, `DOCX`), and 10 challenge profiles.
@@ -85,7 +96,8 @@ Verify both `dist/*.whl` and `dist/*.tar.gz` install cleanly inside isolated vir
 
 GitHub Actions workflows in `.github/workflows/` enforce rules `CI-001`–`CI-020` documented in [docs/TESTING.md](TESTING.md):
 - `ci.yml`: formatting, linting, security lint, mypy, pytest (`>=80%` coverage), build, `twine check`, isolated wheel/sdist install smoke tests.
+- `formal-assurance.yml`: pinned Lean 4 toolchain (`formal/lean-toolchain`), `lake build` (`warningAsError=true`), kernel proof replay + programmatic `structa-axiom-audit` (`lake test`), and Layer 1 + Layer 2 Python-to-Lean conformance (`STRUCTA_REQUIRE_LEAN_ORACLE=1 pytest tests/conformance/ -v`).
 - `security.yml`: `pip-audit`, Ruff security lint, secret scanning.
 - `evaluation.yml`: 50-case golden dataset integrity validation, pytest evaluation suite, and offline baseline regression gate across 8 document categories, `TXT`/`PDF`/`DOCX`, and 10 challenge profiles.
 - `compatibility.yml`: Python `3.11`, `3.12`, and `3.13` test & packaging matrix.
-- `release.yml`: version-tag release qualification and guarded publishing.
+- `release.yml`: version-tag release qualification (`qualify` + `formal-assurance`) and guarded publishing.
