@@ -1,0 +1,21 @@
+name = "structa_formal"
+version = "0.1.0"
+defaultTargets = ["StructaFormal", "structa-formal-oracle", "structa_axiom_audit"]
+testDriver = "structa_axiom_audit"
+
+[leanOptions]
+warningAsError = true
+
+[[lean_lib]]
+name = "StructaFormal"
+
+[[lean_exe]]
+name = "structa-formal-oracle"
+root = "OracleMain"
+supportInterpreter = true
+
+[[lean_exe]]
+name = "structa_axiom_audit"
+exeName = "structa-axiom-audit"
+root = "AxiomAuditMain"
+supportInterpreter = true

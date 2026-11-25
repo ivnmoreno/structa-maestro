@@ -52,6 +52,13 @@ Orthogonal Cross-Cutting Layer: Privacy-Safe Observability & Telemetry (`structa
    - Fault-isolated `ExtractionObserver` / `AsyncExtractionObserver` hooks across stages 2–4 & batch lifecycles
    - Emits correlated, basename-sanitized, zero-PII `ExtractionEvent`s (stage timings, live `BatchProgress`,
      and cumulative `StrategyTelemetry` token/retry/fallback usage) strictly outside Contract v1.0
+
+Independent Dev/CI Assurance Layer: Formal Assurance (`formal/`, Lean 4 + Lake)
+   - Zero-external-dependency Lean 4 formal model of Canonical Output Record Contract v1.0 and selected
+     deterministic pipeline-assembly rules (46 machine-checked theorems audited via `Lean.collectAxioms`
+     and `leanchecker`, excluded from Python wheels/sdists with zero runtime dependency)
+   - Two-layer Python-to-Lean conformance suite (`tests/conformance/`): always-on Python + Hypothesis
+     conformance plus standalone JSONL Lean oracle differential checks enforced in CI and releases
 ```
 
 ## Key Architectural Decisions
