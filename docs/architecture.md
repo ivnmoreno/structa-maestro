@@ -55,8 +55,9 @@ Orthogonal Cross-Cutting Layer: Privacy-Safe Observability & Telemetry (`structa
 
 Independent Dev/CI Assurance Layer: Formal Assurance (`formal/`, Lean 4 + Lake)
    - Zero-external-dependency Lean 4 formal model of Canonical Output Record Contract v1.0 and selected
-     deterministic pipeline-assembly rules (46 machine-checked theorems audited via `Lean.collectAxioms`
-     and `leanchecker`, excluded from Python wheels/sdists with zero runtime dependency)
+     deterministic pipeline-assembly rules (46 machine-checked theorems kernel-replayed via
+     `Lean.Kernel.Environment.replay` and audited via `Lean.collectAxioms`, excluded from Python wheels/sdists
+     with zero runtime dependency)
    - Two-layer Python-to-Lean conformance suite (`tests/conformance/`): always-on Python + Hypothesis
      conformance plus standalone JSONL Lean oracle differential checks enforced in CI and releases
 ```
@@ -67,3 +68,4 @@ Independent Dev/CI Assurance Layer: Formal Assurance (`formal/`, Lean 4 + Lake)
 2. **Non-Coercing Deterministic Validation & Opt-In Binding**: Schema validation is implemented independently of Pydantic coercion so extracted values are never silently altered (e.g., `"42"` is not silently coerced to `42`; `""`, `None`, and `FieldPresence.MISSING` remain strictly distinct). Optional downstream typed binding (`bind_record`/`bind_records`) runs strictly *after* canonical assembly using `strict=True`, leaving provenance, confidence, and validation intact on `ExtractionResult`.
 3. **Failure Reporting Boundary**: Caller definition errors (`SchemaDefinitionError`, `ConfigurationError`) raise immediately before work starts; all document, parsing, extraction, provenance, and validation failures return canonical `ExtractionResult` objects with `status="failed"` or `status="partial"`; observer callback `Exception`s are isolated and scrubbed so observability never degrades extraction reliability; opt-in typed binding rejects invalid/mismatched records with privacy-safe `RecordBindingError`.
 4. **Proportional Dependencies**: Direct `httpx` (`Client` and `AsyncClient`) usage avoids vendor LLM SDK lock-in; strict schema compilation, bounded retries, `Retry-After` parsing, input budgeting, delimiter neutralization, cross-field validation, stateless in-process sync (`concurrent.futures`) and async (`asyncio` + `to_thread`) batch scheduling, in-memory bounded streaming, and privacy-safe telemetry/observers (`telemetry.py`) use Python's standard library; `ExtractionSchema.from_pydantic` and strict record binding reuse the existing `pydantic` dependency with zero new packages; `pypdf` and `python-docx` avoid native binary and AGPL licensing overhead; the thin CLI (`extract` and `extract-batch`) uses standard-library `argparse`.
+5. **Dev/CI-Only Formal Assurance Isolation**: Lean 4 formal specifications and proofs live independently under `formal/` with zero external Lean dependencies, zero FFI/runtime services, and strict exclusion from published Python wheels and sdists. See [Formal Assurance Layer](formal-assurance.md) and [Formal Assurance Architectural Intent](formal-assurance-intent.md).

@@ -17,12 +17,10 @@ Install [`elan`](https://github.com/leanprover/elan) (which automatically activa
 cd formal
 lake build
 lake test
-lake env leanchecker StructaFormal
 ```
 
 - `lake build` compiles `StructaFormal`, `structa-formal-oracle`, and `structa-axiom-audit` with `warningAsError = true` (any `sorry` or warning fails the build).
-- `lake test` runs `structa-axiom-audit`, programmatically inspecting the compiled environment via `Lean.collectAxioms` to verify all 46 required theorems exist and depend only on Lean's standard core axioms (`propext`, `Classical.choice`, `Quot.sound`) with zero `sorryAx`.
-- `lake env leanchecker StructaFormal` independently kernel-checks the compiled `.olean` proofs.
+- `lake test` runs `structa-axiom-audit`, which replays every declaration in `StructaFormal` from scratch against a clean `Init` kernel environment (`Lean.Kernel.Environment.replay`) and programmatically audits all 46 required theorems via `Lean.collectAxioms` to confirm they depend only on Lean's standard core axioms (`propext`, `Classical.choice`, `Quot.sound`) with zero `sorryAx`.
 
 ## Run Two-Layer Python Conformance Tests
 

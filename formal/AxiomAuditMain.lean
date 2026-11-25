@@ -1,7 +1,10 @@
 /-
-  Executable Lake testDriver (`structa-axiom-audit`) verifying that all 46 required theorems
-  in `StructaFormal` exist in the compiled environment and depend ONLY on Lean's standard core
-  axioms (`propext`, `Classical.choice`, `Quot.sound`) with zero `sorryAx` and zero custom axioms.
+  Executable Lake testDriver (`structa-axiom-audit`) performing two kernel-level checks:
+  1. Independent kernel proof replay (`Lean.Environment.replay`): replays every declaration and
+     proof term in `StructaFormal` from scratch against a clean `Init` kernel environment.
+  2. Programmatic axiom & theorem-inventory audit (`Lean.collectAxioms`): verifies all 46 required
+     theorems exist in the replayed kernel environment and depend ONLY on Lean's standard core
+     axioms (`propext`, `Classical.choice`, `Quot.sound`) with zero `sorryAx` and zero custom axioms.
 -/
 
 import Lean
@@ -71,23 +74,34 @@ private def requiredTheorems : List Name := [
 
 def main : IO UInt32 := do
   initSearchPath (← findSysroot)
-  let env ← importModules #[{ module := `StructaFormal }] {}
+  let baseEnv ← importModules #[{ module := `Init }] {}
+  let fullEnv ← importModules #[{ module := `StructaFormal }] {}
+
+  -- Stage 1: Replay all StructaFormal declarations from scratch through the Lean 4 kernel.
+  let mut newConstants : Std.HashMap Name ConstantInfo := {}
+  for (name, cinfo) in fullEnv.constants.map₁ do
+    if !baseEnv.constants.contains name then
+      newConstants := newConstants.insert name cinfo
+  let replayedKernelEnv ← Lean.Kernel.Environment.replay newConstants baseEnv.toKernelEnv
+
+  -- Stage 2: Audit all 46 required theorems (kernel-accepted + core axioms only).
   let mut failures : List String := []
   let mut observedAxioms : List Name := []
   for thm in requiredTheorems do
-    if !env.contains thm then
-      failures := failures ++ [s!"MISSING THEOREM: {thm}"]
+    if !replayedKernelEnv.constants.contains thm then
+      failures := failures ++ [s!"MISSING FROM REPLAYED KERNEL ENV: {thm}"]
     else
       let (axioms, _) ← (Lean.collectAxioms thm : CoreM (Array Name)).toIO
         { fileName := "<structa-axiom-audit>", fileMap := default }
-        { env := env }
+        { env := fullEnv }
       for ax in axioms do
         if !observedAxioms.contains ax then
           observedAxioms := observedAxioms ++ [ax]
         if !allowedAxioms.contains ax then
           failures := failures ++ [s!"DISALLOWED AXIOM '{ax}' used by theorem '{thm}'"]
+
   if failures.isEmpty then
-    IO.println s!"structa-axiom-audit PASSED: {requiredTheorems.length} theorems verified; observed core axioms: {observedAxioms}"
+    IO.println s!"structa-axiom-audit PASSED: {newConstants.size} declarations kernel-replayed; {requiredTheorems.length} theorems verified; observed core axioms: {observedAxioms}"
     return 0
   else
     for msg in failures do

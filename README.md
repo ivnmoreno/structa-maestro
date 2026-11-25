@@ -8,6 +8,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Code Style: Ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
 [![Type Checked: mypy](https://img.shields.io/badge/type%20checked-mypy-blue.svg)](https://mypy-lang.org/)
+[![Formal Verification: Lean 4](https://img.shields.io/badge/formal%20verification-Lean%204-blueviolet.svg)](docs/formal-assurance.md)
 [![Commitizen friendly](https://img.shields.io/badge/commitizen-friendly-brightgreen.svg)](https://commitizen-tools.github.io/commitizen/)
 
 **Structured Data Extraction Engine** — a reusable Python library (`structa_maestro`) with a minimal thin CLI (`structa-maestro`) that transforms unstructured documents (`TXT`, text-based `PDF`, `DOCX`, `HTML`, `Markdown`, and `EML`) into validated, schema-conforming, provenance-backed canonical records.
@@ -291,7 +292,7 @@ See [docs/development.md](docs/development.md) for subset filtering, repeated-tr
 `formal/` contains an independent, zero-external-dependency **Lean 4** project (pinned via `formal/lean-toolchain`, excluded from Python wheels and sdists, with **zero runtime dependency** for `structa-maestro` consumers) that machine-checks 46 theorems over **Canonical Output Record Contract v1.0** invariants (field presence/nullability, validation outcomes/diagnostics, confidence bounds/calibration, provenance document binding & `SourceLocation` spans, identity uniqueness, and processing-vs-validation status assembly):
 
 ```bash
-cd formal && lake build && lake test && lake env leanchecker StructaFormal
+cd formal && lake build && lake test
 cd .. && STRUCTA_REQUIRE_LEAN_ORACLE=1 pytest tests/conformance/ -v
 ```
 

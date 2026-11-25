@@ -10,7 +10,7 @@
 
 - **Python remains the sole runtime language**: `structa_maestro` has **zero** Lean runtime dependencies, **zero** FFI bridges, and **zero** Lean background services.
 - **Zero consumer impact**: Ordinary users installing `structa-maestro` from PyPI wheels or source distributions never need Lean or Lake installed; `formal/` is strictly excluded from both built wheels and source distributions (`sdist`).
-- **Standalone Lake project**: `formal/` is pinned to `leanprover/lean4:v4.36.0` (`formal/lean-toolchain`) with **zero external Lean dependencies** (no Mathlib), strict `warningAsError = true` compilation, a programmatic `Lean.collectAxioms` theorem audit (`lake test`), and independent kernel checking (`lake env leanchecker StructaFormal`).
+- **Standalone Lake project**: `formal/` is pinned to `leanprover/lean4:v4.36.0` (`formal/lean-toolchain`) with **zero external Lean dependencies** (no Mathlib), strict `warningAsError = true` compilation, full kernel proof replay (`Lean.Kernel.Environment.replay`), and a programmatic `Lean.collectAxioms` theorem audit (`lake test`).
 - **Contract v1.0 unchanged**: The formal layer faithfully mirrors the authoritative Python implementation (`contracts/models.py`, `contracts/enums.py`, `validation/validator.py`, `confidence/normalizer.py`, `provenance/associator.py`, `builder/result_builder.py`) without altering Contract v1.0 schemas or runtime APIs.
 
 ---
@@ -69,7 +69,6 @@ Install [`elan`](https://github.com/leanprover/elan) once; it automatically sele
 cd formal
 lake build
 lake test
-lake env leanchecker StructaFormal
 ```
 
 ### Run Two-Layer Python-to-Lean Conformance Tests
@@ -84,5 +83,12 @@ STRUCTA_REQUIRE_LEAN_ORACLE=1 pytest tests/conformance/ -v
 
 ### Continuous Integration & Release Gates
 
-- **Pull Requests & `main`**: `.github/workflows/formal-assurance.yml` installs the pinned Lean toolchain, runs `lake build` (`warningAsError = true`), runs `lake test` (`structa-axiom-audit`), runs `lake env leanchecker StructaFormal`, and runs `STRUCTA_REQUIRE_LEAN_ORACLE=1 pytest tests/conformance/ -v`.
+- **Pull Requests & `main`**: `.github/workflows/formal-assurance.yml` installs the pinned Lean toolchain, runs `lake build` (`warningAsError = true`), runs `lake test` (`structa-axiom-audit` kernel replay + 46-theorem axiom audit), and runs `STRUCTA_REQUIRE_LEAN_ORACLE=1 pytest tests/conformance/ -v`.
 - **Release Qualification**: `.github/workflows/release.yml` gates PyPI publishing on both `qualify` and `formal-assurance` passing.
+
+## Related Documents
+
+- [Formal Assurance Architectural Intent](formal-assurance-intent.md)
+- [Standalone Formal Project Guide](../formal/README.md)
+- [Architecture Overview](architecture.md)
+- [Development & CI Parity Guide](development.md)
