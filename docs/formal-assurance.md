@@ -2,11 +2,27 @@
 
 `structa-maestro` includes an independent **Lean 4** formal specification and theorem-proving layer under `formal/` that formally specifies selected invariants of **Canonical Output Record Contract v1.0** and complements them with an independent two-layer Python-to-Lean conformance suite.
 
+> [!IMPORTANT]
 > **Architectural Principle**: Structa uses deterministic processing and empirical testing to establish observed implementation behavior, while formal verification establishes mathematical properties of explicitly defined domain models. Both contribute to assurance, and neither is misrepresented as proof of the factual correctness of extracted information.
 
 ---
 
-## 1. Architectural Position & Runtime Isolation
+## 1. Four-Layer Assurance Architecture
+
+```mermaid
+flowchart TD
+    L1["Layer 1: Lean 4 Machine-Checked Model Proofs (formal/StructaFormal/)\n46 named theorems across Contract v1.0 & assembly rules\nwarningAsError=true + Lean.Kernel.Environment.replay (908 decls) + Lean.collectAxioms"]
+    L2["Layer 2: Two-Layer Python-to-Lean Conformance (tests/conformance/)\nAlways-on Python + Hypothesis tests AND JSONL Lean Oracle differential checks"]
+    L3["Layer 3: Conventional Deterministic Suites (tests/)\nUnit, contract, serialization round-trip, parser, security, resilience & CLI suites (>=80% cov)"]
+    L4["Layer 4: Empirical Golden Evaluation (evals/)\n50-case synthetic golden corpus regression gate (0.0000 baseline delta)"]
+
+    L1 -->|"Proves mathematical properties of the formal model"| L2
+    L2 -->|"Verifies Python runtime agrees with compiled Lean predicates"| L3
+    L3 -->|"Verifies implementation, parsers, APIs & security defenses"| L4
+    L4 -->|"Measures empirical extraction & provenance quality"| Release["CI & Release Qualification Gates (formal-assurance.yml + release.yml)"]
+```
+
+### Runtime Isolation Guarantees
 
 - **Python remains the sole runtime language**: `structa_maestro` has **zero** Lean runtime dependencies, **zero** FFI bridges, and **zero** Lean background services.
 - **Zero consumer impact**: Ordinary users installing `structa-maestro` from PyPI wheels or source distributions never need Lean or Lake installed; `formal/` is strictly excluded from both built wheels and source distributions (`sdist`).
@@ -28,7 +44,7 @@
 | `IdentityInvariants.lean` | `contracts/models.py` | Explicit `"1.0"` contract version, pairwise unique `record_id`s, non-empty identifiers, extraction-vs-schema identity separation |
 | `StatusAssembly.lean` | `contracts/models.py`, `builder/result_builder.py` | Processing-vs-validation independence + exact `ResultBuilder` assembly rules (`build_failed`, `PARTIAL` never promoted to `COMPLETED`, `strategy_output.failed=True` with preserved records, record-level `FAILED` independence) |
 | `Oracle.lean` / `OracleMain.lean` | Dev/CI conformance only | Standalone JSONL CLI (`structa-formal-oracle`) evaluating Lean's actual decidable `isValid*` and assembly functions on Python-generated Contract v1.0 test vectors |
-| `AxiomAuditMain.lean` | Lake `testDriver` | Programmatically verifies all 46 named theorems exist in `StructaFormal` and use ONLY Lean's standard core axioms (`propext`, `Classical.choice`, `Quot.sound`) with zero `sorryAx` |
+| `AxiomAuditMain.lean` | Lake `testDriver` | Replays all `StructaFormal` declarations from scratch via `Lean.Kernel.Environment.replay` and programmatically verifies all 46 named theorems use ONLY Lean's standard core axioms (`propext`, `Classical.choice`, `Quot.sound`) with zero `sorryAx` |
 
 ---
 
@@ -52,10 +68,12 @@ Structa explicitly distinguishes **four independent assurance levels** and never
 
 ## 4. Explicit Assumptions & Limitations
 
-1. **Formal model vs. Python runtime**: A Lean 4 proof establishes mathematical truth about the Lean specification in `formal/StructaFormal/`, *not* automatic equivalence of Python/Pydantic execution. Empirical correspondence is established by the two-layer conformance suite (`tests/conformance/`).
-2. **Exact rational vs. IEEE-754 floating-point confidence**: `ConfidenceInvariants.lean` models finite confidence values using Lean's exact rational numbers (`Rat`) and represents `NaN`/`±inf`/non-numeric inputs explicitly via `ConfidenceInput`. Python's `ConfidenceNormalizer` rounds valid finite floats via `round(numeric, 6)` and operates on IEEE-754 floats; `tests/conformance/` exercises IEEE-754 edge cases (`0.0`, `1.0`, `NaN`, `+inf`, `-inf`, booleans, out-of-range floats) directly against Python and the Lean oracle.
-3. **Abstract field values**: `ExtractedField.value` is modeled as `FieldValue.nullValue | FieldValue.nonNull reprTag` because Contract v1.0's structural field invariant depends solely on null-vs-non-null distinction, not arbitrary dynamic Python object types.
-4. **No semantic truth claims**: Proving that a provenance entry references `source.document_id` and has valid `char_start ≤ char_end` never proves that the extracted value is factually true in the real world.
+> [!NOTE]
+> A Lean 4 proof establishes mathematical properties of the formal specification in `formal/StructaFormal/`, **not** automatic runtime equivalence of Python/Pydantic execution. Empirical agreement between Lean and Python is enforced by the two-layer conformance suite (`tests/conformance/`).
+
+1. **Exact rational vs. IEEE-754 floating-point confidence**: `ConfidenceInvariants.lean` models finite confidence values using Lean's exact rational numbers (`Rat`) and represents `NaN`/`±inf`/non-numeric inputs explicitly via `ConfidenceInput`. Python's `ConfidenceNormalizer` rounds valid finite floats via `round(numeric, 6)` and operates on IEEE-754 floats; `tests/conformance/` exercises IEEE-754 edge cases (`0.0`, `1.0`, `NaN`, `+inf`, `-inf`, booleans, out-of-range floats) directly against Python and the Lean oracle.
+2. **Abstract field values**: `ExtractedField.value` is modeled as `FieldValue.nullValue | FieldValue.nonNull reprTag` because Contract v1.0's structural field invariant depends solely on null-vs-non-null distinction, not arbitrary dynamic Python object types.
+3. **No semantic truth claims**: Proving that a provenance entry references `source.document_id` and has valid `char_start ≤ char_end` never proves that the extracted value is factually true in the real world.
 
 ---
 

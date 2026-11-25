@@ -11,41 +11,68 @@
 [![Formal Verification: Lean 4](https://img.shields.io/badge/formal%20verification-Lean%204-blueviolet.svg)](docs/formal-assurance.md)
 [![Commitizen friendly](https://img.shields.io/badge/commitizen-friendly-brightgreen.svg)](https://commitizen-tools.github.io/commitizen/)
 
-**Structured Data Extraction Engine** — a reusable Python library (`structa_maestro`) with a minimal thin CLI (`structa-maestro`) that transforms unstructured documents (`TXT`, text-based `PDF`, `DOCX`, `HTML`, `Markdown`, and `EML`) into validated, schema-conforming, provenance-backed canonical records.
+**Structured Data Extraction Engine** — a reusable, stateless Python library (`structa_maestro`) with a minimal thin CLI (`structa-maestro`) that transforms unstructured documents (`TXT`, text-based `PDF`, `DOCX`, `HTML`, `Markdown`, and `EML`) into **validated, schema-conforming, provenance-backed canonical records** using only four pure-Python runtime dependencies (`pydantic`, `pypdf`, `python-docx`, `httpx`).
+
+[Quick Start](#quick-usage-python-library) • [Input Formats](#supported-input-formats) • [Strategies](#built-in-extraction-strategies) • [CLI](#thin-cli-extract--extract-batch) • [Examples](#runnable-offline-examples) • [Formal Assurance](#formal-assurance-layer-lean-4--dev--ci-only) • [Docs](#further-documentation)
 
 ---
 
 ## What It Solves (and What It Does Not)
 
-Unstructured business documents (invoices, contracts, employment records, applications, correspondence) frequently need to be converted into reliable structured data. Existing approaches often blur raw extraction output with schema compliance and factual support.
+Unstructured business documents (invoices, contracts, employment records, applications, emails, reports) frequently need to be converted into reliable structured data. Ad-hoc LLM JSON generation blurs extracted values, schema validity, source evidence, and operational completion into a single fragile blob.
 
-`structa-maestro` treats extraction as a structured data processing operation with **five strictly separated dimensions**:
+`structa-maestro` treats extraction as a staged data-processing operation with **five strictly separated quality dimensions**:
 
-| Dimension | Question Answered |
-| --- | --- |
-| **Extracted value** | What value was identified (distinct from `missing`, `null`, and `""`)? |
-| **Confidence** | How reliable does the extraction strategy assess this value (uncalibrated in MVP)? |
-| **Provenance** | What verified source excerpt and location in the originating document support it? |
-| **Validation** | Does the value deterministically satisfy the user's schema and constraints? |
-| **Processing status** | Did processing complete (`completed`), partially succeed (`partial`), or fail (`failed`)? |
+| Dimension | Question Answered | Epistemic Guarantee |
+| --- | --- | --- |
+| **Extracted value** | What value was identified? | Strictly distinguishes `missing`, explicit `null`, and `""` (zero silent coercion) |
+| **Confidence** | How reliable does the strategy assess this value? | Bounded on declared scale (`0-1`), explicitly marked `calibrated: false` |
+| **Provenance** | What source excerpt & location support it? | Verified verbatim against `PreparedDocument`; unlocated quotes marked `unverified` |
+| **Validation** | Does the record satisfy schema & cross-field rules? | Deterministic non-coercing validator (`valid` / `invalid` / `not_validated`) |
+| **Processing status** | Did the extraction pipeline complete? | `completed` / `partial` / `failed`, strictly independent of schema validity |
 
-### Explicit MVP Boundaries (Out of Scope)
-- No OCR or scanned/image-based document recognition (image-only PDFs report `no_extractable_text`).
-- No RAG pipelines, vector databases, embeddings, semantic search, or document chunk indexing.
-- No web UI, database persistence, extraction history, distributed batch orchestration, or multi-provider routing.
+```mermaid
+flowchart LR
+    In["Document (File / Bytes / Text / Stream) + ExtractionSchema"] --> Parse["Hardened Parsers (TXT, PDF, DOCX, HTML, MD, EML)"]
+    Parse --> Strat["Extraction Strategy (OpenAI / Anthropic / Deterministic)"]
+    Strat --> Verify["Provenance + Confidence + Deterministic Validation"]
+    Verify --> Contract["Canonical Output Record Contract v1.0"]
+    Contract --> Bind["Optional Strict Typed Binding (Pydantic v2)"]
+    Verify -. "zero-PII events" .-> Obs["Observability Hooks (Sync / Async)"]
+    Formal["Lean 4 Formal Assurance (Dev/CI Only)"] -. "46 proofs + conformance" .-> Contract
+```
+
+> [!IMPORTANT]
+> **Explicit Scope Boundaries**: `structa-maestro` is a focused structured extraction engine — **not** an OCR engine (image-only PDFs report `no_extractable_text`), **not** a RAG/vector/embedding search platform, and **not** a database-backed workflow server or multi-provider router.
 
 ---
 
 ## Supported Input Formats
 
-- **TXT** (`text/plain`, `.txt`) — UTF-8, UTF-8 BOM, UTF-16, ASCII, Latin-1 / Windows-1252 with 1-indexed `line_start`/`line_end` locations
-- **Text-based PDF** (`application/pdf`, `.pdf`) — multi-page text extraction with 1-indexed `page` locations and page-limit protection
-- **DOCX** (`application/vnd.openxmlformats-officedocument.wordprocessingml.document`, `.docx`) — paragraphs, headings, and tables with pre-open ZIP-bomb protection and `paragraph`/`section` locations
-- **HTML** (`text/html`, `.html`, `.htm`) — hardened stdlib parser stripping `<script>`, `<style>`, `<noscript>`, `<template>`, and comments with incremental entity-expansion limits, zero network fetches, and heading-driven `section`/`paragraph` locations
-- **Markdown** (`text/markdown`, `.md`, `.markdown`) — ATX/Setext heading hierarchy into `section` (ignoring `#` inside fenced code blocks) with 1-indexed `paragraph`, `line_start`, and `line_end` locations
-- **EML** (`message/rfc822`, `.eml`) — hardened stdlib RFC 5322 email parser extracting normalized `Headers` (`From`, `To`, `Cc`, `Date`, `Subject`) and text bodies (`text/plain` preferred, sanitized HTML fallback), skipping binary/file attachments safely (`attachments_skipped` warning), and enforcing MIME part-count & nesting-depth caps
+Format detection inspects actual content signatures (magic bytes, binary checks, and archive contents) rather than blindly trusting filename extensions or media-type hints:
 
-Format detection inspects actual file signatures (magic bytes, binary checks, and archive contents) rather than blindly trusting filename extensions. See [examples/multiformat_extraction_example.py](examples/multiformat_extraction_example.py).
+| Format | Media Type | Extensions | Provenance Locations | Built-In Hardening (Zero Extra Deps) |
+| --- | --- | --- | --- | --- |
+| **TXT** | `text/plain` | `.txt` | `line_start`, `line_end`, `char_*` | UTF-8 / UTF-8 BOM / UTF-16 / Latin-1 decoding, `max_file_bytes` |
+| **PDF** | `application/pdf` | `.pdf` | `page`, `char_*` | Magic-byte validation, `max_pages` (default 200) & text caps |
+| **DOCX** | `application/vnd.openxmlformats-officedocument.wordprocessingml.document` | `.docx` | `paragraph`, `section`, `char_*` | Pre-open ZIP-bomb inspection (`max_decompressed_bytes`) |
+| **HTML** | `text/html` | `.html`, `.htm` | `section`, `paragraph`, `char_*` | Strips `<script>`/`<style>`/`<noscript>`/`<template>`/comments, incremental entity-expansion guard, zero network fetches |
+| **Markdown** | `text/markdown` | `.md`, `.markdown` | `section`, `paragraph`, `line_*`, `char_*` | ATX/Setext heading tracking (ignoring `#` in fenced code blocks) |
+| **EML** | `message/rfc822` | `.eml` | `section`, `paragraph`, `char_*` | Normalized `Headers` + `text/plain`/HTML body, 128-part / 16-depth MIME-bomb caps, safe attachment skipping (`attachments_skipped`) |
+
+All formats work seamlessly from files or in-memory via `DocumentInput.from_bytes(...)`, `from_text(...)`, `from_stream(...)`, and `from_path(...)` with **zero temporary files written to disk**.
+
+---
+
+## Built-In Extraction Strategies
+
+All strategies sit behind a strict **Strategy-to-Contract Firewall** (`StrategyOutput` → `ResultBuilder` → `ExtractionResult`), ensuring provider wire formats (`choices`, `tool_use`, `usage`, etc.) never leak into Contract `v1.0`:
+
+| Strategy | Mode | Wire Protocol | Structured Output & Hardening |
+| --- | --- | --- | --- |
+| `OpenAICompatibleLLMStrategy` / `AsyncOpenAICompatibleLLMStrategy` | Sync / Async | OpenAI Chat Completions (`/v1/chat/completions`, vLLM, Ollama, LiteLLM, proxies) | Strict `json_schema` + single-step JSON fallback, bounded retries (`Retry-After`, deadlines), `InputBudgetPolicy`, nonce + delimiter neutralization, token telemetry |
+| `AnthropicLLMStrategy` / `AsyncAnthropicLLMStrategy` | Sync / Async | Native Anthropic Messages API (`/v1/messages`) | Forced `tool_use` (`emit_extraction_result`) + single-step JSON-text fallback, `429`/`529` overloaded retries, `x-api-key` scrubbing, `InputBudgetPolicy`, token telemetry |
+| `DeterministicTestStrategy` / `AsyncDeterministicTestStrategy` | Sync / Async | In-process callable / static output | 100% offline deterministic testing, contract verification, and golden evaluation |
 
 ---
 
@@ -64,6 +91,9 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 ```
+
+> [!NOTE]
+> Installing `structa-maestro` requires **zero Lean tooling** and installs only four pure-Python packages (`pydantic`, `pypdf`, `python-docx`, `httpx`).
 
 ---
 
@@ -107,11 +137,9 @@ print(result.status, result.validation.status)
 print(result.to_json(indent=2))
 ```
 
-In-memory inputs (`bytes`/`bytearray`/`memoryview`, plain text, and binary streams) are supported without writing temporary files via `DocumentInput.from_bytes(...)`, `DocumentInput.from_text(...)`, `DocumentInput.from_stream(...)`, and `DocumentInput.from_path(...)` across both `extract(...)` and `extract_batch(...)`; see [examples/in_memory_extraction_example.py](examples/in_memory_extraction_example.py).
-
 ### Pydantic v2 Schemas, JSON Export & Strict Typed Binding
 
-Prefer defining your schema once as a Pydantic v2 `BaseModel` instead of a manual dictionary:
+Define your schema once as a Pydantic v2 `BaseModel`, export it losslessly for CLI use, and opt into strict non-coercing binding after canonical extraction:
 
 ```python
 from datetime import date
@@ -140,88 +168,60 @@ class Invoice(BaseModel):
     notes: str | None = None
 
 
-# 1. Derive an immutable ExtractionSchema (optionally with cross-field ValidationRules)
 schema = ExtractionSchema.from_pydantic(Invoice, schema_id="invoice-schema")
-
-# 2. Optional: export to JSON for CLI `structa-maestro extract --schema invoice_schema.json`
-# Path("invoice_schema.json").write_text(schema.to_json(indent=2), encoding="utf-8")
-
-# 3. Extract canonical Contract v1.0 result, then opt into strict non-coercing binding
 result = extract("invoice.pdf", schema, strategy=strategy)
+
 try:
     invoices: list[Invoice] = bind_records(result, Invoice)
 except RecordBindingError as exc:
-    # Failed/invalid results are refused safely (no raw values leaked in exc)
+    # Failed/invalid results are refused safely (no raw extracted values leaked in exc)
     print(result.status, result.validation.status, exc)
 ```
 
-- `bind_record(record, Model)` and `bind_records(result, Model, only_valid=False)` use strict, non-coercing Pydantic validation (`strict=True`) while keeping full provenance, confidence, warnings, and status intact on `ExtractionResult`.
-- For partial multi-record extractions, pass `only_valid=True` to `bind_records(...)` to bind only `completed` + `valid` records.
-- See [examples/pydantic_schema_example.py](examples/pydantic_schema_example.py) and [Public API & CLI Reference](docs/api.md) for the complete type/constraint mapping table and unsupported construct rules.
+> [!TIP]
+> For multi-record `partial` extractions, pass `only_valid=True` to `bind_records(result, Invoice, only_valid=True)` to materialize only `completed` + `valid` records while preserving full provenance, confidence, and diagnostics on `ExtractionResult`.
 
 ### Native Asyncio Extraction (`aextract`, `aextract_batch`, FastAPI)
 
-Use `AsyncOpenAICompatibleLLMStrategy` (backed by `httpx.AsyncClient` and non-blocking `asyncio.sleep` retries) with `aextract(...)` and `aextract_batch(...)` in async services:
+Use `AsyncOpenAICompatibleLLMStrategy` or `AsyncAnthropicLLMStrategy` (backed by `httpx.AsyncClient` and non-blocking `asyncio.sleep` retries) with `aextract(...)` and `aextract_batch(...)`:
 
 ```python
 import os
 from structa_maestro import (
-    AsyncOpenAICompatibleLLMStrategy,
+    AsyncAnthropicLLMStrategy,
     BatchOptions,
     DocumentInput,
+    InMemoryTelemetryObserver,
     aextract,
     aextract_batch,
 )
 
+telemetry = InMemoryTelemetryObserver()
+
 # Pooled client via `async with` (or pass a shared FastAPI lifespan `http_client=httpx.AsyncClient(...)`)
-async with AsyncOpenAICompatibleLLMStrategy(
-    model="gpt-4o-mini",
-    api_key=os.environ["STRUCTA_MAESTRO_API_KEY"],
+async with AsyncAnthropicLLMStrategy(
+    model="claude-sonnet-4-5",
+    api_key=os.environ["ANTHROPIC_API_KEY"],
 ) as strategy:
     result = await aextract(
         DocumentInput.from_bytes(upload_bytes, filename="invoice.pdf"),
         schema,
         strategy=strategy,
+        observers=[telemetry],
     )
     batch = await aextract_batch(
         [doc_a, doc_b, doc_c],
         schema,
         strategy=strategy,
         options=BatchOptions(max_workers=4),
+        observers=[telemetry],
     )
-```
 
-- Blocking document parsing and synchronous strategies are automatically offloaded via `asyncio.to_thread`, and external `asyncio.CancelledError` propagates cleanly while cancelling in-flight batch tasks.
-- See [examples/async_extraction_example.py](examples/async_extraction_example.py) and [Configuration & Security](docs/configuration.md) for shared `httpx.AsyncClient` / FastAPI lifespan guidance.
-
-### Privacy-Safe Observability, Stage Timings & Token Accounting
-
-Attach zero-dependency observers (`InMemoryTelemetryObserver`, `StructuredLoggingObserver`, or custom `ExtractionObserver` / `AsyncExtractionObserver` adapters) to any sync or async single/batch call to measure per-stage durations, live batch progress, and cumulative LLM token/retry/fallback usage—without modifying Contract `v1.0` or exposing raw text, extracted values, host paths, or secrets:
-
-```python
-from structa_maestro import (
-    BatchOptions,
-    InMemoryTelemetryObserver,
-    aextract_batch,
-)
-
-telemetry = InMemoryTelemetryObserver()
-batch = await aextract_batch(
-    docs,
-    schema,
-    strategy=strategy,
-    options=BatchOptions(max_workers=4),
-    observers=[telemetry],
-)
 print(telemetry.summary().to_json(indent=2))
 ```
 
-- Observer errors are strictly fault-isolated (never failing extractions or triggering `fail_fast`), while `asyncio.CancelledError` always propagates cleanly.
-- See [examples/observability_telemetry_example.py](examples/observability_telemetry_example.py), [Public API & CLI Reference](docs/api.md), and [Configuration & Security](docs/configuration.md) for OpenTelemetry and Prometheus adapter patterns.
-
-By default, `OpenAICompatibleLLMStrategy` / `AsyncOpenAICompatibleLLMStrategy` (OpenAI-compatible Chat Completions) and `AnthropicLLMStrategy` / `AsyncAnthropicLLMStrategy` (native Anthropic `/v1/messages` with forced `tool_use` structured output) enable strict schema-guided structured outputs with automatic compatibility fallback, bounded exponential-backoff retries (`max_retries=2`, honoring `Retry-After` and Anthropic `529` overloaded responses), a `120,000`-character input budget (`overflow_policy="reject"`), and embedded delimiter neutralization against prompt injection. See [Configuration & Security](docs/configuration.md), [examples/hardened_llm_strategy_example.py](examples/hardened_llm_strategy_example.py), and [examples/anthropic_strategy_example.py](examples/anthropic_strategy_example.py) to customize these policies.
-
-For offline deterministic tests or custom extraction logic without external API keys, see `DeterministicTestStrategy` and [examples/](examples/).
+- Blocking document parsing and synchronous strategies are offloaded via `asyncio.to_thread`, and external `asyncio.CancelledError` propagates cleanly while cancelling in-flight batch tasks.
+- Observer callbacks (`InMemoryTelemetryObserver`, `StructuredLoggingObserver`, or custom `ExtractionObserver` / `AsyncExtractionObserver` adapters for OpenTelemetry/Prometheus) are strictly fault-isolated and carry zero raw text, extracted values, host paths, or credentials.
 
 ---
 
@@ -243,10 +243,29 @@ structa-maestro extract-batch ./invoices/ --schema invoice_schema.json \
   --summary-json summary.json --telemetry-json telemetry.json
 ```
 
-- Supports optional reliability controls (`--structured-output-mode`, `--max-retries`, `--max-input-chars`, `--overflow-policy`) and optional `--telemetry-json <path>` (on both `extract` and `extract-batch`) to write a privacy-safe `TelemetrySummary` JSON file while keeping stdout purely Contract `v1.0`.
-- Programmatic stateless batch extraction is available via `extract_batch(...)` and `ExtractionEngine.extract_batch(...)` with `BatchOptions(max_workers=..., fail_fast=...)`; see [examples/batch_extraction_example.py](examples/batch_extraction_example.py).
-- Emits the exact **Canonical Output Record Contract v1.0** JSON on `stdout` (or `--output <path>`).
-- Exit codes: `0` (all `completed` + `valid`), `2` (any `partial`/`failed`/`invalid` canonical result or early `--fail-fast` stop), `1` (invalid CLI args, empty discovery, schema, or configuration error).
+- **Exit codes**: `0` (all `completed` + `valid`), `2` (any `partial`/`failed`/`invalid` canonical result or early `--fail-fast` stop), `1` (CLI usage, empty discovery, schema, or configuration error).
+- Supports reliability flags (`--provider`, `--max-tokens`, `--structured-output-mode`, `--max-retries`, `--max-input-chars`, `--overflow-policy`) and `--telemetry-json <path>` while keeping `stdout` strictly Contract `v1.0`.
+
+---
+
+## Runnable Offline Examples
+
+All 12 scripts under [examples/](examples/) execute completely offline (zero API keys required) and are verified continuously in CI:
+
+| Example Script | Capability Demonstrated |
+| --- | --- |
+| [basic_invoice_extraction.py](examples/basic_invoice_extraction.py) | End-to-end single-record extraction, provenance, confidence, and Contract `v1.0` JSON |
+| [multi_record_extraction.py](examples/multi_record_extraction.py) | Multi-record extraction (`cardinality="multiple"`) with per-record validation |
+| [custom_strategy_example.py](examples/custom_strategy_example.py) | Implementing a custom `ExtractionStrategy` behind the Strategy-to-Contract Firewall |
+| [hardened_llm_strategy_example.py](examples/hardened_llm_strategy_example.py) | Strict `json_schema`, fallback, bounded retries, `InputBudgetPolicy`, and delimiter neutralization |
+| [anthropic_strategy_example.py](examples/anthropic_strategy_example.py) | Sync & async `AnthropicLLMStrategy` forced `tool_use` + token telemetry over `httpx.MockTransport` |
+| [cross_field_validation_example.py](examples/cross_field_validation_example.py) | Declarative comparison, exact `Decimal` arithmetic balance, conditional & group rules |
+| [batch_extraction_example.py](examples/batch_extraction_example.py) | Stateless concurrent `extract_batch(...)`, `fail_fast`, `BatchSummary`, and JSONL export |
+| [in_memory_extraction_example.py](examples/in_memory_extraction_example.py) | Zero-temp-file `DocumentInput.from_bytes`, `from_text`, and `from_stream` extraction |
+| [pydantic_schema_example.py](examples/pydantic_schema_example.py) | `ExtractionSchema.from_pydantic`, JSON export, and strict `bind_record` / `bind_records` |
+| [async_extraction_example.py](examples/async_extraction_example.py) | Native asyncio `aextract`, `aextract_batch`, pooled `async with`, and concurrency bounds |
+| [observability_telemetry_example.py](examples/observability_telemetry_example.py) | `InMemoryTelemetryObserver`, `StructuredLoggingObserver`, stage timings, and token rollups |
+| [multiformat_extraction_example.py](examples/multiformat_extraction_example.py) | Consistent extraction & provenance across HTML, Markdown, and RFC 5322 EML documents |
 
 ---
 
@@ -267,10 +286,12 @@ Every extraction returns an immutable `ExtractionResult` supporting lossless rou
 
 ## Current Limitations
 
-- **Uncalibrated confidence**: Confidence scores currently report `"calibrated": false` and MUST NOT be interpreted as statistical probabilities.
-- **Intra-record validation scope**: Declarative cross-field and conditional validation rules operate within each extracted record (including nested objects and line-item arrays); cross-document validation remains out of scope. See [Public API & CLI Reference](docs/api.md) and [examples/cross_field_validation_example.py](examples/cross_field_validation_example.py).
+> [!WARNING]
+> - **Uncalibrated confidence**: Confidence scores currently report `"calibrated": false` and MUST NOT be interpreted as statistical probabilities.
+> - **External model data transmission**: `OpenAICompatibleLLMStrategy`, `AsyncOpenAICompatibleLLMStrategy`, `AnthropicLLMStrategy`, and `AsyncAnthropicLLMStrategy` transmit prepared document text to the configured endpoint; review provider data-handling policies before processing confidential documents.
+
+- **Intra-record validation scope**: Declarative cross-field and conditional validation rules operate within each extracted record (including nested objects and line-item arrays); cross-document validation remains out of scope.
 - **Text-only extraction**: Scanned PDFs and embedded images are not OCR-processed.
-- **External model data transmission**: `OpenAICompatibleLLMStrategy`, `AsyncOpenAICompatibleLLMStrategy`, `AnthropicLLMStrategy`, and `AsyncAnthropicLLMStrategy` transmit prepared document text to the configured endpoint; review provider data-handling policies before processing confidential documents.
 
 ---
 
@@ -289,14 +310,14 @@ See [docs/development.md](docs/development.md) for subset filtering, repeated-tr
 
 ## Formal Assurance Layer (Lean 4 — Dev & CI Only)
 
-`formal/` contains an independent, zero-external-dependency **Lean 4** project (pinned via `formal/lean-toolchain`, excluded from Python wheels and sdists, with **zero runtime dependency** for `structa-maestro` consumers) that machine-checks 46 theorems over **Canonical Output Record Contract v1.0** invariants (field presence/nullability, validation outcomes/diagnostics, confidence bounds/calibration, provenance document binding & `SourceLocation` spans, identity uniqueness, and processing-vs-validation status assembly):
+`formal/` contains an independent, zero-external-dependency **Lean 4** project (pinned via `formal/lean-toolchain`, excluded from Python wheels and sdists, with **zero runtime dependency** for `structa-maestro` consumers) that machine-checks **46 theorems** over **Canonical Output Record Contract v1.0** invariants (field presence/nullability, validation outcomes/diagnostics, confidence bounds/calibration, provenance document binding & `SourceLocation` spans, identity uniqueness, and processing-vs-validation status assembly), replayed from scratch via `Lean.Kernel.Environment.replay` and cross-checked against Python via a two-layer conformance suite:
 
 ```bash
 cd formal && lake build && lake test
 cd .. && STRUCTA_REQUIRE_LEAN_ORACLE=1 pytest tests/conformance/ -v
 ```
 
-See [Formal Assurance Guide](docs/formal-assurance.md) for the complete assurance matrix, formal model scope, assumptions, and explicit non-goals.
+See [Formal Assurance Guide](docs/formal-assurance.md) for the 4-layer assurance diagram, complete assurance matrix, formal model scope, assumptions, and explicit non-goals.
 
 ---
 
