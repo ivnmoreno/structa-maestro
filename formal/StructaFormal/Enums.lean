@@ -16,6 +16,12 @@ inductive FieldType where
   | object
   deriving DecidableEq, Repr
 
+/-- Whether a schema targets a single record or multiple records (`ExtractionCardinality`). -/
+inductive ExtractionCardinality where
+  | single
+  | multiple
+  deriving DecidableEq, Repr
+
 /-- Operational completion state of an extraction or record (`ProcessingStatus`). -/
 inductive ProcessingStatus where
   | completed
@@ -69,6 +75,15 @@ def FieldType.fromString? : String → Option FieldType
   | "date" => some .date
   | "array" => some .array
   | "object" => some .object
+  | _ => none
+
+def ExtractionCardinality.toString : ExtractionCardinality → String
+  | .single => "single"
+  | .multiple => "multiple"
+
+def ExtractionCardinality.fromString? : String → Option ExtractionCardinality
+  | "single" => some .single
+  | "multiple" => some .multiple
   | _ => none
 
 def ProcessingStatus.toString : ProcessingStatus → String

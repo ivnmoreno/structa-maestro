@@ -11,6 +11,8 @@ import StructaFormal.ValidationInvariants
 import StructaFormal.ConfidenceInvariants
 import StructaFormal.ProvenanceInvariants
 import StructaFormal.StatusAssembly
+import StructaFormal.SchemaModels
+import StructaFormal.DeterministicValidation
 
 namespace StructaFormal
 
@@ -49,11 +51,19 @@ private def getOptBool (obj : Json) (k : String) (default : Bool) : Except Strin
   | none => .ok default
   | some j => j.getBool?
 
+private def jsonToRat (j : Json) : Except String Rat :=
+  match j with
+  | .num n => .ok (jsonNumberToRat n)
+  | .str s =>
+    match Json.parse s with
+    | .ok (.num n) => .ok (jsonNumberToRat n)
+    | _ => .error s!"expected decimal number string, got '{s}'"
+  | _ => .error "expected number or numeric string"
+
 private def getOptRat (obj : Json) (k : String) : Except String (Option Rat) :=
   match getOptField obj k with
   | none => .ok none
-  | some (.num n) => .ok (some (jsonNumberToRat n))
-  | some _ => .error s!"expected number or null for '{k}'"
+  | some j => some <$> jsonToRat j
 
 private def parseEnum {α : Type} (label : String) (fn : String → Option α) (s : String) :
     Except String α :=
@@ -245,6 +255,136 @@ def parseExtractionResult (j : Json) : Except String ExtractionResult := do
     warnings := warns
   }
 
+private def orderByKeys {α : Type} (entries : List (String × α)) (order? : Option (List String)) :
+    List (String × α) :=
+  match order? with
+  | none => entries
+  | some keys =>
+    let ordered := keys.filterMap fun k => entries.find? (fun kv => kv.1 == k)
+    let remaining := entries.filter fun kv => !keys.contains kv.1
+    ordered ++ remaining
+
+partial def parseRuntimeValue (j : Json) : Except String RuntimeValue := do
+  let kind ← getReqStr j "kind"
+  match kind with
+  | "null" => pure .nullVal
+  | "string" => pure (.strVal (← getReqStr j "value"))
+  | "integer" =>
+    let v ← j.getObjVal? "value"
+    pure (.intVal (← v.getInt?))
+  | "decimal" =>
+    let v ← j.getObjVal? "value"
+    pure (.decVal (← jsonToRat v))
+  | "non_finite_decimal" => pure .nonFiniteDecVal
+  | "boolean" => pure (.boolVal (← getReqBool j "value"))
+  | "date" => pure (.dateVal (← getReqStr j "value"))
+  | "datetime" => pure .datetimeVal
+  | "array" =>
+    match ← j.getObjVal? "value" with
+    | .arr elems => pure (.arrayVal (← elems.toList.mapM parseRuntimeValue))
+    | _ => .error "expected array for RuntimeValue 'array'"
+  | "object" =>
+    match ← j.getObjVal? "value" with
+    | .obj kvs =>
+      let pairs ← kvs.toList.mapM fun (k, vj) => do
+        pure (k, ← parseRuntimeValue vj)
+      pure (.objectVal pairs)
+    | _ => .error "expected object for RuntimeValue 'object'"
+  | "other" => pure .otherVal
+  | other => .error s!"unknown RuntimeValue kind: '{other}'"
+
+def parseFieldConstraints (j : Json) : Except String FieldConstraints := do
+  let minVal ← getOptRat j "min_value"
+  let maxVal ← getOptRat j "max_value"
+  let minLen ← getOptInt j "min_length"
+  let maxLen ← getOptInt j "max_length"
+  let minIt ← getOptInt j "min_items"
+  let maxIt ← getOptInt j "max_items"
+  let pat ← getOptStr j "pattern"
+  let allowed ← match getOptField j "allowed_values" with
+    | none => pure none
+    | some (.arr elems) => some <$> elems.toList.mapM parseRuntimeValue
+    | some _ => .error "expected array or null for 'allowed_values'"
+  pure {
+    minValue := minVal,
+    maxValue := maxVal,
+    minLength := minLen,
+    maxLength := maxLen,
+    minItems := minIt,
+    maxItems := maxIt,
+    pattern := pat,
+    allowedValues := allowed
+  }
+
+partial def parseFieldSpec (j : Json) : Except String FieldSpec := do
+  let name ← getReqStr j "name"
+  let ftStr ← getReqStr j "field_type"
+  let ft ← parseEnum "FieldType" FieldType.fromString? ftStr
+  let req ← getOptBool j "required" true
+  let nul ← getOptBool j "nullable" false
+  let constraints ← match getOptField j "constraints" with
+    | none => pure ({} : FieldConstraints)
+    | some cj => parseFieldConstraints cj
+  let propOrder ← match getOptField j "property_order" with
+    | none => pure none
+    | some (.arr elems) => some <$> elems.toList.mapM (fun e => e.getStr?)
+    | some _ => .error "expected string array for 'property_order'"
+  let props ← match getOptField j "properties" with
+    | none => pure none
+    | some (.obj kvs) =>
+      let parsed ← kvs.toList.mapM fun (k, vj) => do
+        pure (k, ← parseFieldSpec vj)
+      pure (some (orderByKeys parsed propOrder))
+    | some _ => .error "expected object or null for 'properties'"
+  let items ← match getOptField j "items" with
+    | none => pure none
+    | some ij => some <$> parseFieldSpec ij
+  let aaf ← getOptBool j "allow_additional_fields" false
+  pure (.mk name ft req nul constraints props items aaf)
+
+def parseExtractionSchema (j : Json) : Except String ExtractionSchema := do
+  let sid ← getReqStr j "schema_id"
+  let sver ← getReqStr j "schema_version"
+  let cardStr ← match getOptStr j "cardinality" with
+    | .ok (some s) => pure s
+    | .ok none => pure "single"
+    | .error e => .error e
+  let card ← parseEnum "ExtractionCardinality" ExtractionCardinality.fromString? cardStr
+  let aaf ← getOptBool j "allow_additional_fields" false
+  let maxDepth ← match getOptInt j "max_depth" with
+    | .ok (some n) => pure n
+    | .ok none => pure 16
+    | .error e => .error e
+  let fieldOrder ← match getOptField j "field_order" with
+    | none => pure none
+    | some (.arr elems) => some <$> elems.toList.mapM (fun e => e.getStr?)
+    | some _ => .error "expected string array for 'field_order'"
+  let fields ← match ← j.getObjVal? "fields" with
+    | .obj kvs =>
+      let parsed ← kvs.toList.mapM fun (k, vj) => do
+        pure (k, ← parseFieldSpec vj)
+      pure (orderByKeys parsed fieldOrder)
+    | _ => .error "expected object for 'fields'"
+  pure {
+    schemaId := sid,
+    schemaVersion := sver,
+    fields := fields,
+    cardinality := card,
+    allowAdditionalFields := aaf,
+    maxDepth := maxDepth
+  }
+
+def parseRecordFieldInput (j : Json) : Except String RecordFieldInput := do
+  match j with
+  | .obj kvs =>
+    kvs.toList.mapM fun (k, vj) => do
+      let presStr ← getReqStr vj "presence"
+      let pres ← parseEnum "FieldPresence" FieldPresence.fromString? presStr
+      let valJson ← vj.getObjVal? "value"
+      let val ← parseRuntimeValue valJson
+      pure (k, (pres, val))
+  | _ => .error "expected object for 'fields'"
+
 private def dummyValidationError : DiagnosticIssue :=
   { code := "err", severity := .error, stage := .validation, message := "validation error" }
 
@@ -362,6 +502,64 @@ def evaluateOracleRequest (req : Json) : Except String Json := do
         ("relationship", ev.relationship.toString),
         ("has_location", ev.location.isSome)
       ])
+  | "schema_well_formed" =>
+    match parseExtractionSchema payload with
+    | .ok schema => pure (Json.mkObj [("ok", true), ("valid", isValidExtractionSchema schema)])
+    | .error _ => pure (Json.mkObj [("ok", true), ("valid", false)])
+  | "validate_record" =>
+    let schemaJson ← payload.getObjVal? "schema"
+    let schema ← parseExtractionSchema schemaJson
+    let recordId ← match getOptStr payload "record_id" with
+      | .ok (some s) => pure s
+      | .ok none => pure "record-001"
+      | .error e => .error e
+    let fieldsJson ← payload.getObjVal? "fields"
+    let fields ← parseRecordFieldInput fieldsJson
+    let patternMap : List (String × Bool) ← match getOptField payload "pattern_results" with
+      | none => pure []
+      | some (.obj kvs) =>
+        kvs.toList.mapM fun (k, vj) => do
+          pure (k, ← vj.getBool?)
+      | some _ => .error "expected object or null for 'pattern_results'"
+    let pm : PatternMatcher := fun fp _ =>
+      match patternMap.find? (fun kv => kv.1 == fp) with
+      | some (_, matched) => matched
+      | none => true
+    let (recOutcome, fieldOutcomes) := validateRecord pm fields schema recordId
+    let errorsJson : List Json := recOutcome.errors.map fun e =>
+      Json.mkObj [
+        ("field_path", match e.fieldPath with | some s => Json.str s | none => Json.null),
+        ("code", Json.str e.code)
+      ]
+    let fieldStatusesJson : Json :=
+      Json.mkObj (fieldOutcomes.map fun (k, o) => (k, Json.str o.status.toString))
+    pure (Json.mkObj [
+      ("ok", true),
+      ("status", recOutcome.status.toString),
+      ("errors", Json.arr errorsJson.toArray),
+      ("field_statuses", fieldStatusesJson)
+    ])
+  | "validate_result_cardinality" =>
+    let cardStr ← getReqStr payload "cardinality"
+    let card ← parseEnum "ExtractionCardinality" ExtractionCardinality.fromString? cardStr
+    let counts ← parseList payload "record_error_counts" (fun j => j.getNat?)
+    let hasRecs ← getReqBool payload "has_records"
+    let failedBefore ← getReqBool payload "failed_before_validation"
+    let recOutcomes : List ValidationOutcome := counts.map fun n =>
+      makeValidationOutcome (List.replicate n dummyValidationError)
+    let schema : ExtractionSchema := {
+      schemaId := "cardinality-check",
+      schemaVersion := "1.0",
+      fields := [],
+      cardinality := card
+    }
+    let out := validateResultCardinality recOutcomes schema hasRecs failedBefore
+    let codesJson : List Json := out.errors.map (fun e => Json.str e.code)
+    pure (Json.mkObj [
+      ("ok", true),
+      ("status", out.status.toString),
+      ("codes", Json.arr codesJson.toArray)
+    ])
   | other => .error s!"unknown oracle kind: '{other}'"
 
 end StructaFormal

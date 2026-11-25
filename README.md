@@ -39,7 +39,7 @@ flowchart LR
     Verify --> Contract["Canonical Output Record Contract v1.0"]
     Contract --> Bind["Optional Strict Typed Binding (Pydantic v2)"]
     Verify -. "zero-PII events" .-> Obs["Observability Hooks (Sync / Async)"]
-    Formal["Lean 4 Formal Assurance (Dev/CI Only)"] -. "46 proofs + conformance" .-> Contract
+    Formal["Lean 4 Formal Assurance (Dev/CI Only)"] -. "78 proofs + conformance" .-> Contract
 ```
 
 > [!IMPORTANT]
@@ -310,7 +310,7 @@ See [docs/development.md](docs/development.md) for subset filtering, repeated-tr
 
 ## Formal Assurance Layer (Lean 4 — Dev & CI Only)
 
-`formal/` contains an independent, zero-external-dependency **Lean 4** project (pinned via `formal/lean-toolchain`, excluded from Python wheels and sdists, with **zero runtime dependency** for `structa-maestro` consumers) that machine-checks **46 theorems** over **Canonical Output Record Contract v1.0** invariants (field presence/nullability, validation outcomes/diagnostics, confidence bounds/calibration, provenance document binding & `SourceLocation` spans, identity uniqueness, and processing-vs-validation status assembly), replayed from scratch via `Lean.Kernel.Environment.replay` and cross-checked against Python via a two-layer conformance suite:
+`formal/` contains an independent, zero-external-dependency **Lean 4** project (pinned via `formal/lean-toolchain`, excluded from Python wheels and sdists, with **zero runtime dependency** for `structa-maestro` consumers) that machine-checks **78 theorems** across **Canonical Output Record Contract v1.0** (46 theorems: field presence/nullability, validation outcomes/diagnostics, confidence bounds/calibration, provenance document binding & `SourceLocation` spans, identity uniqueness, and processing-vs-validation status assembly) and **Schema Well-Formedness & Deterministic Validation Semantics** (32 theorems: constraint ordering & type compatibility, `OBJECT`/`ARRAY` recursion, determinism, strict non-coercion, presence/nullability separation, extra-field rejection, diagnostic soundness, and `SINGLE`/`MULTIPLE` cardinality), replayed from scratch via `Lean.Kernel.Environment.replay` and cross-checked against Python via a two-layer conformance suite:
 
 ```bash
 cd formal && lake build && lake test

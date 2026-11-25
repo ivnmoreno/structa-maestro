@@ -15,7 +15,7 @@ open Lean
 private def allowedAxioms : List Name :=
   [``propext, ``Classical.choice, ``Quot.sound]
 
-/-- Complete registry of all 46 required machine-checked theorems (`data-model.md` §4). -/
+/-- Complete registry of all 78 required machine-checked theorems (46 Contract v1.0 + 32 Schema & Validation). -/
 private def requiredTheorems : List Name := [
   -- 1. Field Invariants (4)
   ``StructaFormal.missing_field_has_no_value,
@@ -64,12 +64,47 @@ private def requiredTheorems : List Name := [
   ``StructaFormal.partial_or_errors_never_promoted_to_completed,
   ``StructaFormal.failed_strategy_with_records_is_partial_and_validated,
   ``StructaFormal.record_failed_status_independent_of_validation,
-  -- 7. Decidable Predicate Soundness/Completeness Bridges (5)
+  -- 7. Contract v1.0 Predicate Soundness/Completeness Bridges (5)
   ``StructaFormal.isValidSourceLocation_iff,
   ``StructaFormal.isValidConfidenceAssessment_iff,
   ``StructaFormal.isValidValidationOutcome_iff,
   ``StructaFormal.isValidExtractedField_iff,
-  ``StructaFormal.isValidExtractionResult_iff
+  ``StructaFormal.isValidExtractionResult_iff,
+  -- 8. Schema Well-Formedness Predicate Bridges (3)
+  ``StructaFormal.isValidFieldConstraints_iff,
+  ``StructaFormal.isValidFieldSpec_iff,
+  ``StructaFormal.isValidExtractionSchema_iff,
+  -- 9. Schema Well-Formedness Invariants (10)
+  ``StructaFormal.schema_constraints_ordering_and_nonneg,
+  ``StructaFormal.schema_numeric_constraints_require_numeric_type,
+  ``StructaFormal.schema_string_constraints_require_string_type,
+  ``StructaFormal.schema_array_constraints_require_array_type,
+  ``StructaFormal.schema_object_requires_nonempty_matching_properties,
+  ``StructaFormal.schema_array_requires_valid_items,
+  ``StructaFormal.schema_nonempty_unique_fields_and_identities,
+  ``StructaFormal.schema_cardinality_mutually_distinct,
+  ``StructaFormal.schema_allow_additional_fields_distinguishable,
+  ``StructaFormal.schema_incompatible_constraints_rejected,
+  -- 10. Deterministic Validation & Cardinality Semantics (19)
+  ``StructaFormal.validation_is_deterministic,
+  ``StructaFormal.validate_value_errors_are_valid_diagnostics,
+  ``StructaFormal.validate_record_outcomes_satisfy_contract,
+  ``StructaFormal.validate_record_valid_iff_all_fields_valid,
+  ``StructaFormal.missing_required_field_is_invalid,
+  ``StructaFormal.missing_optional_field_is_valid,
+  ``StructaFormal.present_null_disallowed_is_invalid,
+  ``StructaFormal.present_null_allowed_is_valid,
+  ``StructaFormal.no_coercion_string_for_integer,
+  ``StructaFormal.no_coercion_bool_for_integer,
+  ``StructaFormal.no_coercion_bool_for_decimal,
+  ``StructaFormal.no_coercion_datetime_for_date,
+  ``StructaFormal.no_coercion_nonfinite_for_decimal,
+  ``StructaFormal.integer_accepted_for_unconstrained_decimal,
+  ``StructaFormal.allowed_values_separates_bool_and_int,
+  ``StructaFormal.unexpected_extra_field_rejected_when_disallowed,
+  ``StructaFormal.extra_field_allowed_when_opted_in_or_missing,
+  ``StructaFormal.cardinality_single_semantics,
+  ``StructaFormal.cardinality_multiple_and_prevalidation_semantics
 ]
 
 def main : IO UInt32 := do
