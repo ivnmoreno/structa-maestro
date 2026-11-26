@@ -245,12 +245,13 @@ structa-maestro extract-batch ./invoices/ --schema invoice_schema.json \
 
 - **Exit codes**: `0` (all `completed` + `valid`), `2` (any `partial`/`failed`/`invalid` canonical result or early `--fail-fast` stop), `1` (CLI usage, empty discovery, schema, or configuration error).
 - Supports reliability flags (`--provider`, `--max-tokens`, `--structured-output-mode`, `--max-retries`, `--max-input-chars`, `--overflow-policy`), `--calibrator <artifact.json>`, and `--telemetry-json <path>` while keeping `stdout` strictly Contract `v1.0`.
+- Also provides offline human-review subcommands: `structa-maestro review-plan <result.json>` (exit `0` clean / `2` needs review) and `structa-maestro apply-review <result.json> --schema <schema.json> --decisions <decisions.json> [--audit-json <audit.json>]`.
 
 ---
 
 ## Runnable Offline Examples
 
-All 13 scripts under [examples/](examples/) execute completely offline (zero API keys required) and are verified continuously in CI:
+All 14 scripts under [examples/](examples/) execute completely offline (zero API keys required) and are verified continuously in CI:
 
 | Example Script | Capability Demonstrated |
 | --- | --- |
@@ -267,6 +268,7 @@ All 13 scripts under [examples/](examples/) execute completely offline (zero API
 | [observability_telemetry_example.py](examples/observability_telemetry_example.py) | `InMemoryTelemetryObserver`, `StructuredLoggingObserver`, stage timings, and token rollups |
 | [multiformat_extraction_example.py](examples/multiformat_extraction_example.py) | Consistent extraction & provenance across HTML, Markdown, and RFC 5322 EML documents |
 | [confidence_calibration_example.py](examples/confidence_calibration_example.py) | Zero-dependency empirical calibration (`fit_calibrator`), ECE/Brier reduction, artifact persistence, and `calibrated: false` vs. `true` |
+| [human_review_workflow_example.py](examples/human_review_workflow_example.py) | Stateless `plan_review` triage, immutable `apply_review` corrections + re-validation, privacy-safe `ReviewAudit`, and `bind_records` |
 
 ---
 

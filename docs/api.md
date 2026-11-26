@@ -2,7 +2,7 @@
 
 All stable public symbols are exported from the top-level `structa_maestro` package.
 
-[Entry Points](#library-entry-points) • [Schema Definition](#schema-definition) • [Typed Binding](#strict-opt-in-typed-record-binding-bind_record-bind_records) • [Strategies](#strategies--reliability-policies) • [Confidence Calibration](#empirical-confidence-calibration-opt-in) • [Observability](#observability--privacy-safe-telemetry) • [Canonical Contract](#canonical-output--serialization) • [Exceptions](#exceptions) • [Diagnostics](#extraction-strategy-diagnostic-codes-pipelinestageextraction) • [Thin CLI](#thin-cli-structa-maestro)
+[Entry Points](#library-entry-points) • [Schema Definition](#schema-definition) • [Typed Binding](#strict-opt-in-typed-record-binding-bind_record-bind_records) • [Strategies](#strategies--reliability-policies) • [Confidence Calibration](#empirical-confidence-calibration-opt-in) • [Human Review](#stateless-human-review--correction-workflow) • [Observability](#observability--privacy-safe-telemetry) • [Canonical Contract](#canonical-output--serialization) • [Exceptions](#exceptions) • [Diagnostics](#extraction-strategy-diagnostic-codes-pipelinestageextraction) • [Thin CLI](#thin-cli-structa-maestro)
 
 ## Library Entry Points
 
@@ -121,6 +121,19 @@ By default (`calibrator=None`), `ConfidenceNormalizer` emits `calibrated=False` 
   - Missing, non-numeric, non-finite, and out-of-range scores stay `calibrated=False` with standard warnings; non-matching scales stay uncalibrated with `confidence_calibration_scale_mismatch`; calibrator runtime errors or invalid outputs fall back to uncalibrated confidence with `confidence_calibration_failed` (`WARNING`, `EXTRACTION`).
   - See [examples/confidence_calibration_example.py](../examples/confidence_calibration_example.py) and `python -m evals calibrate` for evaluation-driven fitting & K-fold cross-validation.
 
+## Stateless Human Review & Correction Workflow
+
+Programmatic, zero-dependency review triage and immutable correction application over Contract `v1.0` results (no database or web UI):
+
+- **Triage (`plan_review`)**:
+  - `plan_review(result: ExtractionResult, *, policy: ReviewPolicy | None = None) -> ReviewPlan`: pure, read-only inspection returning ordered `ReviewItem` entries across result, record, and sorted field scopes, separating all five quality dimensions via `ReviewReason` (`low_confidence`, `uncalibrated_confidence`, `missing_confidence`, `unverified_provenance`, `conflicting_provenance`, `missing_provenance`, `ambiguous_value`, `field_error`, `field_validation_failed`, `record_validation_failed`, `result_validation_failed`, `partial_or_failed_status`), plus `ProvenanceSummary`, `needs_review`, `reason_counts`, and `to_dict()` / `to_json()`.
+  - `ReviewPolicy(min_confidence=0.85, require_calibrated_confidence=False, flag_missing_confidence=False, flag_unverified_provenance=True, flag_conflicting_provenance=True, flag_missing_provenance=False, flag_ambiguous_fields=True, flag_field_errors=True, flag_invalid_fields=True, flag_invalid_records=True, flag_partial_or_failed_results=True)`.
+- **Immutable Application & Re-Validation (`apply_review`)**:
+  - `apply_review(result, schema, submission, *, redact_values=True, validator=None) -> ReviewApplicationResult`: immutably applies `ReviewSubmission` (`FieldReviewDecision` for `APPROVE`/`CORRECT`/`MARK_MISSING`, `RecordReviewDecision` for `REJECT_RECORD`), re-runs `DeterministicValidator.validate_record` (including cross-field rules) and `validate_result_cardinality`, preserves Contract `v1.0` round-trip integrity without fabricating source quotes or silently coercing invalid reviewer input, and returns `ReviewApplicationResult(result, audit)`.
+  - `ReviewSubmission` supports strict JSON persistence (`to_dict`/`from_dict`/`to_json`/`from_json`/`to_file`/`from_file` with `5 MiB` cap and optional explicit `value_type` restoration for `decimal`/`date`).
+  - `ReviewAudit` (`audit_version="1.0"`) records deterministic `ReviewAuditEntry` transitions and counts while redacting raw before/after values by default (`redact_values=True`).
+  - See [examples/human_review_workflow_example.py](../examples/human_review_workflow_example.py).
+
 ## Observability & Privacy-Safe Telemetry
 
 All telemetry models and observer hooks are strictly decoupled from Canonical Output Record Contract `v1.0` and carry zero raw document text, extracted field values, provenance excerpts, host directory paths, or credentials:
@@ -215,6 +228,19 @@ structa-maestro extract-batch <path_or_dir> [<path_or_dir> ...] --schema <schema
   [--calibrator <calibrator.json>]
   [--telemetry-json <telemetry.json>]
   [all common --model / --base-url / --api-key-env / limit / LLM reliability flags]
+
+structa-maestro review-plan <result.json>
+  [--min-confidence 0.85|none]
+  [--require-calibrated]
+  [--flag-missing-confidence]
+  [--flag-missing-provenance]
+  [--output <plan.json>]
+  [--pretty]
+
+structa-maestro apply-review <result.json> --schema <schema.json> --decisions <decisions.json>
+  [--output <updated_result.json>]
+  [--audit-json <audit.json>]
+  [--pretty]
 ```
 
-Exit codes: `0` (all `completed` + `valid`), `2` (any `partial`/`failed`/`invalid` canonical result emitted or `--fail-fast` stopped early), `1` (CLI usage, empty discovery, schema, configuration, or file write error). `--telemetry-json <path>` is written on both exit `0` and exit `2` (skipped on eager exit `1` errors) while keeping `stdout` / `--output` strictly Contract `v1.0`.
+Exit codes: `0` (all `completed` + `valid`, or `needs_review=false` for `review-plan`), `2` (any `partial`/`failed`/`invalid` canonical result emitted, `--fail-fast` stopped early, or `needs_review=true` for `review-plan`), `1` (CLI usage, empty discovery, schema, configuration, oversized/corrupt payload, or file write error). `--telemetry-json <path>` and `--audit-json <path>` are written on both exit `0` and exit `2` (skipped on eager exit `1` errors) while keeping `stdout` / `--output` strictly Contract `v1.0` (or `ReviewPlan` JSON for `review-plan`).
