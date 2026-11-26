@@ -34,7 +34,7 @@ Unstructured business documents (invoices, contracts, employment records, applic
 ```mermaid
 flowchart LR
     In["Document (File / Bytes / Text / Stream) + ExtractionSchema"] --> Parse["Hardened Parsers (TXT, PDF, DOCX, HTML, MD, EML)"]
-    Parse --> Strat["Extraction Strategy (OpenAI / Anthropic / Deterministic)"]
+    Parse --> Strat["Extraction Strategy (OpenAI / Anthropic / Gemini / Deterministic)"]
     Strat --> Verify["Provenance + Confidence + Deterministic Validation"]
     Verify --> Contract["Canonical Output Record Contract v1.0"]
     Contract --> Bind["Optional Strict Typed Binding (Pydantic v2)"]
@@ -66,12 +66,13 @@ All formats work seamlessly from files or in-memory via `DocumentInput.from_byte
 
 ## Built-In Extraction Strategies
 
-All strategies sit behind a strict **Strategy-to-Contract Firewall** (`StrategyOutput` → `ResultBuilder` → `ExtractionResult`), ensuring provider wire formats (`choices`, `tool_use`, `usage`, etc.) never leak into Contract `v1.0`:
+All strategies sit behind a strict **Strategy-to-Contract Firewall** (`StrategyOutput` → `ResultBuilder` → `ExtractionResult`), ensuring provider wire formats (`choices`, `tool_use`, `candidates`, `usageMetadata`, `usage`, etc.) never leak into Contract `v1.0`:
 
 | Strategy | Mode | Wire Protocol | Structured Output & Hardening |
 | --- | --- | --- | --- |
 | `OpenAICompatibleLLMStrategy` / `AsyncOpenAICompatibleLLMStrategy` | Sync / Async | OpenAI Chat Completions (`/v1/chat/completions`, vLLM, Ollama, LiteLLM, proxies) | Strict `json_schema` + single-step JSON fallback, bounded retries (`Retry-After`, deadlines), `InputBudgetPolicy`, nonce + delimiter neutralization, token telemetry |
 | `AnthropicLLMStrategy` / `AsyncAnthropicLLMStrategy` | Sync / Async | Native Anthropic Messages API (`/v1/messages`) | Forced `tool_use` (`emit_extraction_result`) + single-step JSON-text fallback, `429`/`529` overloaded retries, `x-api-key` scrubbing, `InputBudgetPolicy`, token telemetry |
+| `GeminiLLMStrategy` / `AsyncGeminiLLMStrategy` | Sync / Async | Native Google Gemini API (`/v1beta/models/{model}:generateContent`) | Strict `responseJsonSchema` + single-step JSON-object fallback, header-only `x-goog-api-key` auth & `AIza...` scrubbing, safety refusal fail-fast, `thought` filtering, `InputBudgetPolicy`, `usageMetadata` telemetry |
 | `DeterministicTestStrategy` / `AsyncDeterministicTestStrategy` | Sync / Async | In-process callable / static output | 100% offline deterministic testing, contract verification, and golden evaluation |
 
 ---
@@ -183,7 +184,7 @@ except RecordBindingError as exc:
 
 ### Native Asyncio Extraction (`aextract`, `aextract_batch`, FastAPI)
 
-Use `AsyncOpenAICompatibleLLMStrategy` or `AsyncAnthropicLLMStrategy` (backed by `httpx.AsyncClient` and non-blocking `asyncio.sleep` retries) with `aextract(...)` and `aextract_batch(...)`:
+Use `AsyncOpenAICompatibleLLMStrategy`, `AsyncAnthropicLLMStrategy`, or `AsyncGeminiLLMStrategy` (backed by `httpx.AsyncClient` and non-blocking `asyncio.sleep` retries) with `aextract(...)` and `aextract_batch(...)`:
 
 ```python
 import os
@@ -230,9 +231,10 @@ print(telemetry.summary().to_json(indent=2))
 ```bash
 export STRUCTA_MAESTRO_API_KEY="your-api-key"
 
-# Single document -> Canonical Output Record Contract v1.0 JSON (OpenAI default, or --provider anthropic)
+# Single document -> Canonical Output Record Contract v1.0 JSON (OpenAI default, --provider anthropic, or --provider gemini)
 structa-maestro extract invoice.pdf --schema invoice_schema.json --pretty
 ANTHROPIC_API_KEY="your-key" structa-maestro extract invoice.pdf --schema invoice_schema.json --provider anthropic --pretty
+GEMINI_API_KEY="your-key" structa-maestro extract invoice.pdf --schema invoice_schema.json --provider gemini --pretty
 
 # Pipe binary or text document via stdin ('-') without temporary files
 cat invoice.pdf | structa-maestro extract - --schema invoice_schema.json --filename invoice.pdf
@@ -251,7 +253,7 @@ structa-maestro extract-batch ./invoices/ --schema invoice_schema.json \
 
 ## Runnable Offline Examples
 
-All 14 scripts under [examples/](examples/) execute completely offline (zero API keys required) and are verified continuously in CI:
+All 15 scripts under [examples/](examples/) execute completely offline (zero API keys required) and are verified continuously in CI:
 
 | Example Script | Capability Demonstrated |
 | --- | --- |
@@ -260,6 +262,7 @@ All 14 scripts under [examples/](examples/) execute completely offline (zero API
 | [custom_strategy_example.py](examples/custom_strategy_example.py) | Implementing a custom `ExtractionStrategy` behind the Strategy-to-Contract Firewall |
 | [hardened_llm_strategy_example.py](examples/hardened_llm_strategy_example.py) | Strict `json_schema`, fallback, bounded retries, `InputBudgetPolicy`, and delimiter neutralization |
 | [anthropic_strategy_example.py](examples/anthropic_strategy_example.py) | Sync & async `AnthropicLLMStrategy` forced `tool_use` + token telemetry over `httpx.MockTransport` |
+| [gemini_strategy_example.py](examples/gemini_strategy_example.py) | Sync & async `GeminiLLMStrategy` strict `responseJsonSchema` + `usageMetadata` telemetry over `httpx.MockTransport` |
 | [cross_field_validation_example.py](examples/cross_field_validation_example.py) | Declarative comparison, exact `Decimal` arithmetic balance, conditional & group rules |
 | [batch_extraction_example.py](examples/batch_extraction_example.py) | Stateless concurrent `extract_batch(...)`, `fail_fast`, `BatchSummary`, and JSONL export |
 | [in_memory_extraction_example.py](examples/in_memory_extraction_example.py) | Zero-temp-file `DocumentInput.from_bytes`, `from_text`, and `from_stream` extraction |
@@ -291,7 +294,7 @@ Every extraction returns an immutable `ExtractionResult` supporting lossless rou
 
 > [!WARNING]
 > - **Confidence calibration requires domain-representative data**: By default (`calibrator=None`), confidence scores report `"calibrated": false` and MUST NOT be interpreted as statistical probabilities. Even when an offline empirical `CalibrationModel` sets `"calibrated": true`, calibration reflects empirical accuracy on its fitting distribution only and never implies schema validity or factual truth.
-> - **External model data transmission**: `OpenAICompatibleLLMStrategy`, `AsyncOpenAICompatibleLLMStrategy`, `AnthropicLLMStrategy`, and `AsyncAnthropicLLMStrategy` transmit prepared document text to the configured endpoint; review provider data-handling policies before processing confidential documents.
+> - **External model data transmission**: `OpenAICompatibleLLMStrategy`, `AsyncOpenAICompatibleLLMStrategy`, `AnthropicLLMStrategy`, `AsyncAnthropicLLMStrategy`, `GeminiLLMStrategy`, and `AsyncGeminiLLMStrategy` transmit prepared document text to the configured endpoint; review provider data-handling policies before processing confidential documents.
 
 - **Intra-record validation scope**: Declarative cross-field and conditional validation rules operate within each extracted record (including nested objects and line-item arrays); cross-document validation remains out of scope.
 - **Text-only extraction**: Scanned PDFs and embedded images are not OCR-processed.

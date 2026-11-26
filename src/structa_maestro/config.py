@@ -19,6 +19,9 @@ _SECRET_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"(?i)(api[_-]?key\s*[:=]\s*['\"]?)([^\s'\",;}{]{6,})"),
     re.compile(r"(?i)(authorization\s*[:=]\s*['\"]?)([^\s'\",;}{]{6,})"),
     re.compile(r"(?i)(x-api-key\s*[:=]\s*['\"]?)([^\s'\",;}{]{6,})"),
+    re.compile(r"(?i)(x-goog-api-key['\"]?\s*[:=]\s*['\"]?)([^\s'\",;}{]{6,})"),
+    re.compile(r"\bAIza[0-9A-Za-z_\-]{16,}\b"),
+    re.compile(r"(?i)([?&]key=)([^&\s'\"#]{6,})"),
 )
 
 
@@ -92,6 +95,9 @@ def sanitize_message(
     sanitized = _SECRET_PATTERNS[2].sub(r"\1[REDACTED]", sanitized)
     sanitized = _SECRET_PATTERNS[3].sub(r"\1[REDACTED]", sanitized)
     sanitized = _SECRET_PATTERNS[4].sub(r"\1[REDACTED]", sanitized)
+    sanitized = _SECRET_PATTERNS[5].sub(r"\1[REDACTED]", sanitized)
+    sanitized = _SECRET_PATTERNS[6].sub("[REDACTED]", sanitized)
+    sanitized = _SECRET_PATTERNS[7].sub(r"\1[REDACTED]", sanitized)
     if len(sanitized) > max_length:
         sanitized = sanitized[: max_length - 3] + "..."
     return sanitized

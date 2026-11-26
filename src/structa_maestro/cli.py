@@ -39,6 +39,10 @@ from structa_maestro.strategies.llm_config import (
     StructuredOutputMode,
     parse_max_input_chars_arg,
 )
+from structa_maestro.strategies.llm_gemini import (
+    DEFAULT_GEMINI_BASE_URL,
+    GeminiLLMStrategy,
+)
 from structa_maestro.strategies.llm_openai_compat import OpenAICompatibleLLMStrategy
 from structa_maestro.telemetry import InMemoryTelemetryObserver
 
@@ -47,6 +51,8 @@ _DEFAULT_BASE_URL = "https://api.openai.com/v1"
 _DEFAULT_MODEL = "gpt-4o-mini"
 _DEFAULT_ANTHROPIC_API_KEY_ENV = "ANTHROPIC_API_KEY"
 _DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-5"
+_DEFAULT_GEMINI_API_KEY_ENV = "GEMINI_API_KEY"
+_DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 
 
 def _resolve_provider_defaults(args: argparse.Namespace) -> tuple[str, str, str]:
@@ -55,6 +61,13 @@ def _resolve_provider_defaults(args: argparse.Namespace) -> tuple[str, str, str]
         base_url = args.base_url if args.base_url is not None else DEFAULT_ANTHROPIC_BASE_URL
         api_key_env = (
             args.api_key_env if args.api_key_env is not None else _DEFAULT_ANTHROPIC_API_KEY_ENV
+        )
+        return model, base_url, api_key_env
+    if args.provider == "gemini":
+        model = args.model if args.model is not None else _DEFAULT_GEMINI_MODEL
+        base_url = args.base_url if args.base_url is not None else DEFAULT_GEMINI_BASE_URL
+        api_key_env = (
+            args.api_key_env if args.api_key_env is not None else _DEFAULT_GEMINI_API_KEY_ENV
         )
         return model, base_url, api_key_env
     model = args.model if args.model is not None else _DEFAULT_MODEL
@@ -67,7 +80,7 @@ def _add_common_extraction_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--schema", required=True, help="Path to the JSON extraction schema file.")
     parser.add_argument(
         "--provider",
-        choices=["openai", "anthropic"],
+        choices=["openai", "anthropic", "gemini"],
         default="openai",
         help="LLM provider strategy backend (default: openai).",
     )
@@ -75,7 +88,8 @@ def _add_common_extraction_args(parser: argparse.ArgumentParser) -> None:
         "--model",
         default=None,
         help=(
-            "Model identifier (default: gpt-4o-mini for openai, claude-sonnet-4-5 for anthropic)."
+            "Model identifier (default: gpt-4o-mini for openai, claude-sonnet-4-5 for anthropic, "
+            "gemini-2.5-flash for gemini)."
         ),
     )
     parser.add_argument(
@@ -83,7 +97,8 @@ def _add_common_extraction_args(parser: argparse.ArgumentParser) -> None:
         default=None,
         help=(
             "Provider endpoint base URL (default: https://api.openai.com/v1 for openai, "
-            "https://api.anthropic.com for anthropic)."
+            "https://api.anthropic.com for anthropic, "
+            "https://generativelanguage.googleapis.com for gemini)."
         ),
     )
     parser.add_argument(
@@ -91,7 +106,8 @@ def _add_common_extraction_args(parser: argparse.ArgumentParser) -> None:
         default=None,
         help=(
             "Environment variable holding the API key "
-            "(default: STRUCTA_MAESTRO_API_KEY for openai, ANTHROPIC_API_KEY for anthropic)."
+            "(default: STRUCTA_MAESTRO_API_KEY for openai, ANTHROPIC_API_KEY for anthropic, "
+            "GEMINI_API_KEY for gemini)."
         ),
     )
     parser.add_argument(
@@ -99,7 +115,7 @@ def _add_common_extraction_args(parser: argparse.ArgumentParser) -> None:
         type=int,
         default=DEFAULT_ANTHROPIC_MAX_TOKENS,
         help=(
-            f"Maximum output tokens for Anthropic Messages API "
+            f"Maximum output tokens for Anthropic Messages and Gemini generateContent APIs "
             f"(default: {DEFAULT_ANTHROPIC_MAX_TOKENS})."
         ),
     )
@@ -366,6 +382,17 @@ def _build_strategy_and_limits(
             api_key=api_key_val,
             base_url=base_url,
             max_tokens=args.max_tokens,
+            structured_output_mode=args.structured_output_mode,
+            retry_policy=retry_policy,
+            input_budget=input_budget,
+        )
+        return strategy, limits
+    if args.provider == "gemini":
+        strategy = GeminiLLMStrategy(
+            model=model,
+            api_key=api_key_val,
+            base_url=base_url,
+            max_output_tokens=args.max_tokens,
             structured_output_mode=args.structured_output_mode,
             retry_policy=retry_policy,
             input_budget=input_budget,

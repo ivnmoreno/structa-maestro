@@ -146,6 +146,32 @@ def parse_anthropic_token_usage(body: Any) -> TokenUsage | None:
     )
 
 
+def parse_gemini_token_usage(body: Any) -> TokenUsage | None:
+    """Parse a Gemini `usageMetadata` payload without fabricating missing counts."""
+    if not isinstance(body, Mapping):
+        return None
+    raw_usage = body.get("usageMetadata")
+    if not isinstance(raw_usage, Mapping):
+        return None
+
+    def _safe_count(key: str) -> int | None:
+        val = raw_usage.get(key)
+        if isinstance(val, bool) or not isinstance(val, int) or val < 0:
+            return None
+        return val
+
+    prompt = _safe_count("promptTokenCount")
+    completion = _safe_count("candidatesTokenCount")
+    total = _safe_count("totalTokenCount")
+    if prompt is None and completion is None and total is None:
+        return None
+    return TokenUsage(
+        prompt_tokens=prompt,
+        completion_tokens=completion,
+        total_tokens=total,
+    )
+
+
 def merge_token_usage(a: TokenUsage | None, b: TokenUsage | None) -> TokenUsage | None:
     """Cumulatively sum observed non-null token counts across strategy attempts."""
     if a is None:

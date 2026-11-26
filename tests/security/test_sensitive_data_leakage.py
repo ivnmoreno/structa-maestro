@@ -713,3 +713,125 @@ def test_anthropic_sync_and_async_strategies_never_leak_api_keys_or_raw_text(
     assert ant_key not in combined
     assert secret_text not in combined
     assert "/private/deal" not in combined
+
+
+@pytest.mark.security
+def test_gemini_sync_and_async_strategies_never_leak_credentials_or_raw_text(
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import asyncio
+    import io
+
+    from structa_maestro import (
+        AsyncGeminiLLMStrategy,
+        DocumentInput,
+        GeminiLLMStrategy,
+        InMemoryTelemetryObserver,
+        RetryPolicy,
+        aextract,
+        extract,
+    )
+    from structa_maestro.cli import run_cli
+    from structa_maestro.config import sanitize_message
+
+    gemini_key = "AIzaSyGeminiSuperSecretToken999111"
+    custom_goog_key = "custom_goog_api_secret_444555"
+    query_token = "query_secret_token_666777"
+    secret_text = "CONFIDENTIAL ACQUISITION VALUATION 750M"
+    doc = DocumentInput.from_text(f"Note: {secret_text}\n", filename="/private/vault/memo.txt")
+    schema = {
+        "schema_id": "vault-sec",
+        "schema_version": "1.0",
+        "fields": {"note": {"type": "string", "required": True}},
+    }
+
+    assert custom_goog_key not in sanitize_message(
+        f"Header failed x-goog-api-key: {custom_goog_key}"
+    )
+    assert gemini_key not in sanitize_message(f"Rejected credential {gemini_key}")
+    assert query_token not in sanitize_message(
+        f"POST https://generativelanguage.googleapis.com/v1beta/models/m:generateContent?key={query_token}"
+    )
+
+    def _sync_fail(_r: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError(
+            f"Failed x-goog-api-key={gemini_key} ?key={query_token} body={secret_text}"
+        )
+
+    async def _async_fail(_r: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError(
+            f"Failed x-goog-api-key={gemini_key} ?key={query_token} body={secret_text}"
+        )
+
+    obs = InMemoryTelemetryObserver()
+    with (
+        caplog.at_level(logging.DEBUG, logger="structa_maestro"),
+        httpx.Client(transport=httpx.MockTransport(_sync_fail)) as sc,
+    ):
+        s_strat = GeminiLLMStrategy(
+            model="gemini-2.5-flash",
+            api_key=gemini_key,
+            http_client=sc,
+            retry_policy=RetryPolicy(max_retries=0),
+        )
+        assert gemini_key not in repr(s_strat)
+        res_sync = extract(doc, schema, strategy=s_strat, observers=[obs])
+
+    async def _run_async() -> str:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(_async_fail)) as ac:
+            a_strat = AsyncGeminiLLMStrategy(
+                model="gemini-2.5-flash",
+                api_key=gemini_key,
+                http_client=ac,
+                retry_policy=RetryPolicy(max_retries=0),
+            )
+            assert gemini_key not in repr(a_strat)
+            res_a = await aextract(doc, schema, strategy=a_strat, observers=[obs])
+            return res_a.to_json()
+
+    with caplog.at_level(logging.DEBUG, logger="structa_maestro"):
+        async_json = asyncio.run(_run_async())
+
+    # CLI stderr redacts Gemini API keys if an error message contains them
+    doc_file = tmp_path / "memo.txt"
+    doc_file.write_text(f"Note: {secret_text}\n", encoding="utf-8")
+    schema_file = tmp_path / "schema.json"
+    schema_file.write_text(
+        '{"schema_id": "vault-sec", "schema_version": "1.0", '
+        '"fields": {"note": {"type": "string", "required": true}}}',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("GEMINI_API_KEY", gemini_key)
+    err_buf = io.StringIO()
+    cli_code = run_cli(
+        [
+            "extract",
+            str(doc_file),
+            "--schema",
+            str(schema_file),
+            "--provider",
+            "gemini",
+            "--base-url",
+            f"https://generativelanguage.googleapis.com?key={gemini_key}",
+        ],
+        stdout=io.StringIO(),
+        stderr=err_buf,
+    )
+    assert cli_code == 1
+
+    combined = "\n".join(
+        [
+            res_sync.to_json(),
+            async_json,
+            obs.summary().to_json(),
+            *(e.to_json() for e in obs.events()),
+            caplog.text,
+            err_buf.getvalue(),
+        ]
+    )
+    assert gemini_key not in combined
+    assert query_token not in combined
+    assert secret_text not in combined
+    assert "/private/vault" not in combined

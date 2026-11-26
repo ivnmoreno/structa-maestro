@@ -126,6 +126,10 @@ from structa_maestro.strategies.llm_config import (
     RetryPolicy,
     StructuredOutputMode,
 )
+from structa_maestro.strategies.llm_gemini import (
+    AsyncGeminiLLMStrategy,
+    GeminiLLMStrategy,
+)
 from structa_maestro.strategies.llm_openai_compat import (
     AsyncOpenAICompatibleLLMStrategy,
     OpenAICompatibleLLMStrategy,
@@ -173,6 +177,7 @@ __all__ = [
     "AsyncDeterministicTestStrategy",
     "AsyncExtractionObserver",
     "AsyncExtractionStrategy",
+    "AsyncGeminiLLMStrategy",
     "AsyncOpenAICompatibleLLMStrategy",
     "BatchDocumentInput",
     "BatchExtractionResult",
@@ -223,6 +228,7 @@ __all__ = [
     "FieldReviewDecision",
     "FieldSpec",
     "FieldType",
+    "GeminiLLMStrategy",
     "GroupPresenceKind",
     "GroupPresenceRule",
     "HistogramParameters",
