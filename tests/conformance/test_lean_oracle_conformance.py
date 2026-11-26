@@ -34,6 +34,15 @@ from tests.conformance.cross_field_reference import (
     encode_schema_with_rules,
     instantiate_python_schema_with_rules_from_vector,
 )
+from tests.conformance.provenance_assembly_reference import (
+    build_assembly_test_schema,
+    build_curated_result_builder_scenarios,
+    build_sample_prepared_document,
+    build_span_location_vectors,
+    encode_build_result_request,
+    encode_document_segment,
+    encode_proposed_evidence,
+)
 from tests.conformance.reference_model import (
     build_confidence_vectors,
     build_extracted_field_vectors,
@@ -52,6 +61,7 @@ from tests.conformance.schema_reference import (
     instantiate_python_schema_from_vector,
 )
 
+from structa_maestro.builder.result_builder import ResultBuilder
 from structa_maestro.confidence.normalizer import ConfidenceNormalizer
 from structa_maestro.contracts.enums import (
     EvidenceRelationship,
@@ -70,8 +80,16 @@ from structa_maestro.contracts.models import (
     SourceLocation,
     ValidationOutcome,
 )
+from structa_maestro.documents.models import DocumentSegment
 from structa_maestro.exceptions import SchemaDefinitionError
+from structa_maestro.provenance.associator import ProvenanceAssociator, _location_from_span
 from structa_maestro.schema.models import ExtractionSchema, FieldConstraints, FieldSpec
+from structa_maestro.strategies.base import (
+    ProposedEvidence,
+    ProposedField,
+    ProposedRecord,
+    StrategyOutput,
+)
 from structa_maestro.validation.validator import DeterministicValidator
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -896,3 +914,312 @@ def test_property_lean_oracle_differential_cross_field_rules(
         (w.field_path, w.code) for w in py_res.warnings
     ]
     assert resp["field_statuses"] == {k: v.status.value for k, v in py_res.field_outcomes.items()}
+
+
+# =============================================================================
+# Spec 015: Provenance Association & Full ResultBuilder Assembly Differential Checks
+# =============================================================================
+
+
+class _FaultyOracleProvenanceAssociator(ProvenanceAssociator):
+    """Injects provenance faults on selected `(record_index, field_name)` pairs."""
+
+    def __init__(self, failing_fields: set[tuple[int, str]]) -> None:
+        super().__init__()
+        self._failing_fields = failing_fields
+
+    def associate(self, **kwargs: Any) -> Any:
+        rec_id = str(kwargs["record_id"])
+        rec_idx = int(rec_id.split("-")[1]) - 1
+        fname = str(kwargs["field_name"])
+        if (rec_idx, fname) in self._failing_fields:
+            raise RuntimeError("Injected provenance fault")
+        return super().associate(**kwargs)
+
+
+def _loc_to_dict(loc: SourceLocation | None) -> dict[str, Any] | None:
+    if loc is None:
+        return None
+    return {
+        "page": loc.page,
+        "paragraph": loc.paragraph,
+        "line_start": loc.line_start,
+        "line_end": loc.line_end,
+        "char_start": loc.char_start,
+        "char_end": loc.char_end,
+        "section": loc.section,
+    }
+
+
+def _assert_build_result_matches_oracle(
+    label: str,
+    py_res: ExtractionResult,
+    resp: dict[str, Any],
+) -> None:
+    assert resp["ok"] is True, f"[{label}] oracle error: {resp}"
+    assert resp["valid_contract"] is True, f"[{label}] Lean ValidExtractionResult failed"
+    assert resp["status"] == py_res.status.value, f"[{label}] status mismatch"
+    assert resp["validation_status"] == py_res.validation.status.value, (
+        f"[{label}] validation_status mismatch"
+    )
+    assert [(e["field_path"], e["code"]) for e in resp["validation_errors"]] == [
+        (e.field_path, e.code) for e in py_res.validation.errors
+    ], f"[{label}] validation_errors mismatch"
+    assert resp["error_codes"] == [e.code for e in py_res.errors], f"[{label}] error_codes mismatch"
+    assert resp["warning_codes"] == [w.code for w in py_res.warnings], (
+        f"[{label}] warning_codes mismatch"
+    )
+    assert len(resp["records"]) == len(py_res.records), f"[{label}] record count mismatch"
+    for lean_rec, py_rec in zip(resp["records"], py_res.records, strict=True):
+        assert lean_rec["record_id"] == py_rec.record_id
+        assert lean_rec["status"] == py_rec.status.value
+        assert lean_rec["validation_status"] == py_rec.validation.status.value
+        assert [(e["field_path"], e["code"]) for e in lean_rec["validation_errors"]] == [
+            (e.field_path, e.code) for e in py_rec.validation.errors
+        ]
+        assert lean_rec["warning_codes"] == [w.code for w in py_rec.warnings]
+        assert set(lean_rec["fields"].keys()) == set(py_rec.fields.keys())
+        for fname, py_f in py_rec.fields.items():
+            lf = lean_rec["fields"][fname]
+            assert lf["presence"] == py_f.presence.value
+            assert lf["is_null"] is (py_f.value is None)
+            assert lf["validation_status"] == py_f.validation.status.value
+            assert lf["provenance_relationships"] == [
+                ev.relationship.value for ev in py_f.provenance
+            ]
+            assert lf["error_codes"] == [e.code for e in py_f.errors]
+            assert lf["warning_codes"] == [w.code for w in py_f.warnings]
+
+
+def test_lean_oracle_matches_python_location_from_span() -> None:
+    """Differential check of `_location_from_span` on all curated overlap/clamp/fallback vectors."""
+    vectors = build_span_location_vectors()
+    requests = [
+        {
+            "kind": "location_from_span",
+            "payload": {
+                "segments": [encode_document_segment(s) for s in segs],
+                "char_start": cs,
+                "char_end": ce,
+            },
+        }
+        for _, segs, cs, ce in vectors
+    ]
+    responses = _query_lean_oracle(requests)
+    for (name, segs, cs, ce), resp in zip(vectors, responses, strict=True):
+        assert resp["ok"] is True
+        py_loc = _location_from_span(segs, cs, ce)
+        assert resp["location"] == _loc_to_dict(py_loc), f"[{name}] location mismatch"
+
+
+@pytest.mark.property
+@settings(max_examples=25, deadline=None)
+@given(
+    cs=st.integers(min_value=0, max_value=100),
+    delta=st.integers(min_value=0, max_value=50),
+    l1=st.integers(min_value=1, max_value=50),
+    l2=st.integers(min_value=1, max_value=50),
+)
+def test_property_lean_oracle_differential_location_from_span(
+    cs: int,
+    delta: int,
+    l1: int,
+    l2: int,
+) -> None:
+    """Hypothesis differential property check: Python `_location_from_span` == Lean oracle."""
+    ce = cs + delta
+    segs = (
+        DocumentSegment(
+            text="a", char_start=0, char_end=cs, page=1, paragraph=1, line_start=l1, line_end=l1
+        ),
+        DocumentSegment(
+            text="b",
+            char_start=cs,
+            char_end=ce + 10,
+            page=2,
+            paragraph=2,
+            line_start=l2,
+            line_end=l2,
+        ),
+    )
+    py_loc = _location_from_span(segs, cs, ce)
+    resp = _query_lean_oracle(
+        [
+            {
+                "kind": "location_from_span",
+                "payload": {
+                    "segments": [encode_document_segment(s) for s in segs],
+                    "char_start": cs,
+                    "char_end": ce,
+                },
+            }
+        ]
+    )[0]
+    assert resp["ok"] is True
+    assert resp["location"] == _loc_to_dict(py_loc)
+
+
+def test_lean_oracle_matches_python_associate_provenance() -> None:
+    """Differential check of multi-item `ProvenanceAssociator.associate` vs. Lean oracle."""
+    doc = build_sample_prepared_document()
+    max_chars = 12
+    items = (
+        ProposedEvidence(quote="Invoice INV-100", source_document_id="foreign-doc"),
+        ProposedEvidence(quote="   \t\n  "),
+        ProposedEvidence(quote="Unlocated long excerpt beyond twelve chars", relationship="direct"),
+        ProposedEvidence(quote="Invoice INV-100", relationship="direct"),
+        ProposedEvidence(quote="Total: 110.00", relationship="direct"),
+        ProposedEvidence(quote="Total: 110.00", relationship="inferred"),
+        ProposedEvidence(quote="Invoice INV-100", relationship="unknown_rel"),
+    )
+    assoc = ProvenanceAssociator(max_excerpt_chars=max_chars)
+    py_res = assoc.associate(
+        document=doc,
+        field_name="invoice_number",
+        value="INV-100",
+        presence=FieldPresence.PRESENT,
+        proposed_evidence=items,
+        record_id="record-001",
+    )
+    resp = _query_lean_oracle(
+        [
+            {
+                "kind": "associate_provenance",
+                "payload": {
+                    "doc_id": doc.source.document_id,
+                    "segments": [encode_document_segment(s) for s in doc.segments],
+                    "field_name": "invoice_number",
+                    "presence": FieldPresence.PRESENT.value,
+                    "record_id": "record-001",
+                    "max_excerpt_chars": max_chars,
+                    "proposed_evidence": [
+                        encode_proposed_evidence(
+                            item, full_text=doc.full_text, field_value="INV-100"
+                        )
+                        for item in items
+                    ],
+                },
+            }
+        ]
+    )[0]
+    assert resp["ok"] is True
+    assert resp["warning_codes"] == [w.code for w in py_res.warnings]
+    assert resp["evidence"] == [
+        {
+            "source_document_id": ev.source_document_id,
+            "relationship": ev.relationship.value,
+            "evidence": ev.evidence,
+            "truncated": ev.truncated,
+            "location": _loc_to_dict(ev.location),
+        }
+        for ev in py_res.evidence
+    ]
+
+
+def test_lean_oracle_matches_python_result_builder_curated() -> None:
+    """Differential check of all 10 curated `ResultBuilder.build` scenarios vs. Lean oracle."""
+    scenarios = build_curated_result_builder_scenarios()
+    requests = [
+        encode_build_result_request(
+            extraction_id=f"ext-{idx:03d}",
+            document=doc,
+            schema=schema,
+            strategy_output=strategy_output,
+            document_warnings=doc_warnings,
+            provenance_failed_fields=failing_fields,
+        )
+        for idx, (_, doc, schema, strategy_output, doc_warnings, failing_fields) in enumerate(
+            scenarios, start=1
+        )
+    ]
+    responses = _query_lean_oracle(requests)
+    for idx, (
+        (name, doc, schema, strategy_output, doc_warnings, failing_fields),
+        resp,
+    ) in enumerate(zip(scenarios, responses, strict=True), start=1):
+        builder = ResultBuilder(
+            provenance_associator=(
+                _FaultyOracleProvenanceAssociator(failing_fields) if failing_fields else None
+            )
+        )
+        py_res = builder.build(
+            document=doc,
+            schema=schema,
+            strategy_output=strategy_output,
+            extraction_id=f"ext-{idx:03d}",
+            document_warnings=doc_warnings,
+        )
+        _assert_build_result_matches_oracle(name, py_res, resp)
+
+
+@pytest.mark.property
+@settings(max_examples=25, deadline=None)
+@given(
+    cardinality=st.sampled_from([ExtractionCardinality.SINGLE, ExtractionCardinality.MULTIPLE]),
+    num_records=st.integers(min_value=0, max_value=2),
+    strat_failed=st.booleans(),
+    strat_partial=st.booleans(),
+    inv_ambiguous=st.booleans(),
+    bad_conf=st.booleans(),
+    note_missing_with_val=st.booleans(),
+    prov_failed=st.booleans(),
+    total_val=st.sampled_from([Decimal("110.00"), Decimal("200.00")]),
+)
+def test_property_lean_oracle_differential_result_builder(
+    cardinality: ExtractionCardinality,
+    num_records: int,
+    strat_failed: bool,
+    strat_partial: bool,
+    inv_ambiguous: bool,
+    bad_conf: bool,
+    note_missing_with_val: bool,
+    prov_failed: bool,
+    total_val: Decimal,
+) -> None:
+    """Hypothesis differential property check: Python `ResultBuilder.build` == Lean oracle."""
+    doc = build_sample_prepared_document()
+    schema = build_assembly_test_schema(cardinality=cardinality)
+    rec = ProposedRecord(
+        fields={
+            "invoice_number": ProposedField(
+                presence=FieldPresence.PRESENT,
+                value="INV-100",
+                confidence=1.5 if bad_conf else 0.9,
+                ambiguous=inv_ambiguous,
+                evidence=(ProposedEvidence(quote="Invoice INV-100", relationship="direct"),),
+            ),
+            "subtotal": ProposedField(presence=FieldPresence.PRESENT, value=Decimal("100.00")),
+            "tax": ProposedField(presence=FieldPresence.PRESENT, value=Decimal("10.00")),
+            "total": ProposedField(presence=FieldPresence.PRESENT, value=total_val),
+            "note": ProposedField(
+                presence=FieldPresence.MISSING if note_missing_with_val else FieldPresence.PRESENT,
+                value="LEAK" if note_missing_with_val else "Approved",
+            ),
+        }
+    )
+    strat_out = StrategyOutput(
+        records=tuple(rec for _ in range(num_records)),
+        failed=strat_failed,
+        partial=strat_partial,
+    )
+    failing_fields = {(0, "invoice_number")} if (prov_failed and num_records > 0) else set()
+    builder = ResultBuilder(
+        provenance_associator=(
+            _FaultyOracleProvenanceAssociator(failing_fields) if failing_fields else None
+        )
+    )
+    py_res = builder.build(
+        document=doc,
+        schema=schema,
+        strategy_output=strat_out,
+        extraction_id="prop-res",
+    )
+    req = encode_build_result_request(
+        extraction_id="prop-res",
+        document=doc,
+        schema=schema,
+        strategy_output=strat_out,
+        provenance_failed_fields=failing_fields,
+    )
+    resp = _query_lean_oracle([req])[0]
+    _assert_build_result_matches_oracle("hypothesis_build_result", py_res, resp)
