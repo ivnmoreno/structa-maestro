@@ -13,9 +13,17 @@ from structa_maestro.batch import BatchOptions, discover_batch_documents
 from structa_maestro.confidence.calibration import CalibrationModel
 from structa_maestro.config import DocumentLimits, sanitize_message
 from structa_maestro.contracts.enums import ProcessingStatus, ValidationStatus
+from structa_maestro.contracts.models import ExtractionResult
 from structa_maestro.documents.inputs import DocumentInput
 from structa_maestro.engine import extract, extract_batch
 from structa_maestro.exceptions import ConfigurationError, StructaMaestroError
+from structa_maestro.review import (
+    MAX_REVIEW_PAYLOAD_BYTES,
+    ReviewPolicy,
+    ReviewSubmission,
+    apply_review,
+    plan_review,
+)
 from structa_maestro.schema.models import ExtractionSchema
 from structa_maestro.strategies.base import ExtractionStrategy
 from structa_maestro.strategies.llm_anthropic import (
@@ -224,7 +232,104 @@ def _build_parser() -> argparse.ArgumentParser:
     batch.add_argument(
         "--summary-json", help="Optional path to write aggregate batch summary JSON."
     )
+
+    rev_plan = subparsers.add_parser(
+        "review-plan",
+        help="Deterministically triage a Contract v1.0 ExtractionResult JSON for human review.",
+    )
+    rev_plan.add_argument("result_file", help="Path to a Contract v1.0 ExtractionResult JSON file.")
+    rev_plan.add_argument(
+        "--min-confidence",
+        default="0.85",
+        help=(
+            "Minimum '0-1' confidence threshold in [0.0, 1.0], or 'none' to disable "
+            "(default: 0.85)."
+        ),
+    )
+    rev_plan.add_argument(
+        "--require-calibrated",
+        action="store_true",
+        help="Flag present fields whose confidence is not empirically calibrated.",
+    )
+    rev_plan.add_argument(
+        "--flag-missing-confidence",
+        action="store_true",
+        help="Flag present fields that have no confidence score.",
+    )
+    rev_plan.add_argument(
+        "--flag-missing-provenance",
+        action="store_true",
+        help="Flag present fields that have no provenance entries.",
+    )
+    rev_plan.add_argument("--output", help="Optional path to write ReviewPlan JSON output.")
+    rev_plan.add_argument(
+        "--pretty",
+        action="store_true",
+        help="Pretty-print ReviewPlan JSON output with 2-space indentation.",
+    )
+
+    rev_apply = subparsers.add_parser(
+        "apply-review",
+        help=(
+            "Immutably apply ReviewSubmission decisions, re-validate, and emit Contract v1.0 JSON."
+        ),
+    )
+    rev_apply.add_argument(
+        "result_file",
+        help="Path to a Contract v1.0 ExtractionResult JSON file.",
+    )
+    rev_apply.add_argument("--schema", required=True, help="Path to the JSON extraction schema.")
+    rev_apply.add_argument(
+        "--decisions",
+        required=True,
+        help="Path to a ReviewSubmission JSON file.",
+    )
+    rev_apply.add_argument("--output", help="Optional path to write updated Contract v1.0 JSON.")
+    rev_apply.add_argument(
+        "--audit-json",
+        default=None,
+        help="Optional path to write privacy-safe ReviewAudit JSON.",
+    )
+    rev_apply.add_argument(
+        "--pretty",
+        action="store_true",
+        help="Pretty-print canonical JSON output with 2-space indentation.",
+    )
     return parser
+
+
+def _load_result_json_file(path_str: str) -> ExtractionResult:
+    if not isinstance(path_str, str) or not path_str.strip():
+        raise ConfigurationError("ExtractionResult file path must be non-empty.")
+    target = Path(path_str)
+    try:
+        if not target.exists() or not target.is_file():
+            raise ConfigurationError(f"ExtractionResult file not found: '{target.name}'.")
+        if target.stat().st_size > MAX_REVIEW_PAYLOAD_BYTES:
+            raise ConfigurationError(
+                f"ExtractionResult file exceeds maximum size limit "
+                f"({MAX_REVIEW_PAYLOAD_BYTES} bytes)."
+            )
+        raw_text = target.read_text(encoding="utf-8")
+    except ConfigurationError:
+        raise
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ConfigurationError(
+            f"Unable to read ExtractionResult file ({type(exc).__name__})."
+        ) from exc
+    return ExtractionResult.from_json(raw_text)
+
+
+def _parse_min_confidence_arg(raw: str) -> float | None:
+    cleaned = raw.strip()
+    if cleaned.lower() == "none":
+        return None
+    try:
+        return float(cleaned)
+    except ValueError as exc:
+        raise ConfigurationError(
+            "--min-confidence must be a float in [0.0, 1.0] or 'none'."
+        ) from exc
 
 
 def _build_strategy_and_limits(
@@ -295,6 +400,86 @@ def run_cli(
     except SystemExit as exc:
         code = exc.code
         return code if isinstance(code, int) else 1
+
+    if args.command == "review-plan":
+        try:
+            loaded_result = _load_result_json_file(args.result_file)
+            min_conf = _parse_min_confidence_arg(args.min_confidence)
+            policy = ReviewPolicy(
+                min_confidence=min_conf,
+                require_calibrated_confidence=args.require_calibrated,
+                flag_missing_confidence=args.flag_missing_confidence,
+                flag_missing_provenance=args.flag_missing_provenance,
+            )
+            plan = plan_review(loaded_result, policy=policy)
+        except StructaMaestroError as exc:
+            err.write(f"Error: {sanitize_message(str(exc))}\n")
+            return 1
+        except Exception as exc:
+            err.write(f"Fatal error: {sanitize_message(type(exc).__name__)}\n")
+            return 1
+
+        plan_json = plan.to_json(indent=2 if args.pretty else None)
+        if args.output:
+            try:
+                out_path = Path(args.output)
+                out_path.parent.mkdir(parents=True, exist_ok=True)
+                out_path.write_text(plan_json + "\n", encoding="utf-8")
+            except OSError as exc:
+                err.write(f"Output write error: {sanitize_message(type(exc).__name__)}\n")
+                return 1
+        else:
+            out.write(plan_json + "\n")
+        return 2 if plan.needs_review else 0
+
+    if args.command == "apply-review":
+        try:
+            if (
+                args.output
+                and args.audit_json
+                and Path(args.output).resolve() == Path(args.audit_json).resolve()
+            ):
+                raise ConfigurationError("--output and --audit-json cannot point to the same file.")
+            if args.audit_json is not None and not args.audit_json.strip():
+                raise ConfigurationError("--audit-json must be a non-empty file path.")
+            loaded_result = _load_result_json_file(args.result_file)
+            schema = ExtractionSchema.from_json_file(args.schema)
+            submission = ReviewSubmission.from_file(args.decisions)
+            applied = apply_review(loaded_result, schema, submission, redact_values=True)
+        except StructaMaestroError as exc:
+            err.write(f"Error: {sanitize_message(str(exc))}\n")
+            return 1
+        except Exception as exc:
+            err.write(f"Fatal error: {sanitize_message(type(exc).__name__)}\n")
+            return 1
+
+        updated_json = applied.result.to_json(indent=2 if args.pretty else None)
+        if args.output:
+            try:
+                out_path = Path(args.output)
+                out_path.parent.mkdir(parents=True, exist_ok=True)
+                out_path.write_text(updated_json + "\n", encoding="utf-8")
+            except OSError as exc:
+                err.write(f"Output write error: {sanitize_message(type(exc).__name__)}\n")
+                return 1
+        else:
+            out.write(updated_json + "\n")
+
+        if args.audit_json:
+            try:
+                audit_path = Path(args.audit_json)
+                audit_path.parent.mkdir(parents=True, exist_ok=True)
+                audit_path.write_text(applied.audit.to_json(indent=2) + "\n", encoding="utf-8")
+            except OSError as exc:
+                err.write(f"Audit write error: {sanitize_message(type(exc).__name__)}\n")
+                return 1
+
+        if (
+            applied.result.status == ProcessingStatus.COMPLETED
+            and applied.result.validation.status == ValidationStatus.VALID
+        ):
+            return 0
+        return 2
 
     if args.command not in ("extract", "extract-batch"):
         err.write(f"Unsupported command: {args.command}\n")
