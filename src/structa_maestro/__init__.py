@@ -158,7 +158,7 @@ from structa_maestro.telemetry import (
 )
 from structa_maestro.validation.validator import DeterministicValidator
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "CALIBRATION_ARTIFACT_VERSION",
