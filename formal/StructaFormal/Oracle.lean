@@ -15,6 +15,8 @@ import StructaFormal.SchemaModels
 import StructaFormal.DeterministicValidation
 import StructaFormal.CrossFieldModels
 import StructaFormal.CrossFieldValidation
+import StructaFormal.ProvenanceAssociation
+import StructaFormal.ResultAssembly
 
 namespace StructaFormal
 
@@ -473,6 +475,156 @@ def parseSchemaRules (j : Json) : Except String (List ValidationRule) :=
   | some (.arr elems) => elems.toList.mapM parseValidationRule
   | some _ => .error "expected array or null for 'rules'"
 
+def parseDocumentSegment (j : Json) : Except String DocumentSegment := do
+  let cs ← (← j.getObjVal? "char_start").getInt?
+  let ce ← (← j.getObjVal? "char_end").getInt?
+  let page ← getOptInt j "page"
+  let para ← getOptInt j "paragraph"
+  let ls ← getOptInt j "line_start"
+  let le ← getOptInt j "line_end"
+  let heading ← getOptStr j "heading"
+  pure {
+    charStart := cs, charEnd := ce, page := page, paragraph := para,
+    lineStart := ls, lineEnd := le, heading := heading
+  }
+
+def parseProposedEvidenceInput (j : Json) : Except String ProposedEvidenceInput := do
+  let quote ← getReqStr j "quote"
+  let srcDoc ← getOptStr j "source_document_id"
+  let rel ← match ← getOptStr j "relationship" with
+    | some s => pure s
+    | none => pure "direct"
+  let span ← match getOptField j "matched_span" with
+    | none => pure none
+    | some (.arr elems) =>
+      match elems.toList with
+      | [a, b] => pure (some (← a.getInt?, ← b.getInt?))
+      | _ => .error "expected 2-element array for 'matched_span'"
+    | some _ => .error "expected array or null for 'matched_span'"
+  let matchedText ← match ← getOptStr j "matched_text" with
+    | some s => pure s
+    | none => pure ""
+  let scalarSup ← getOptBool j "scalar_supported" true
+  pure {
+    quote := quote,
+    sourceDocumentId := srcDoc,
+    relationship := rel,
+    matchedSpan := span,
+    matchedText := matchedText,
+    scalarSupported := scalarSup
+  }
+
+def parseConfidenceInputObj (j : Json) : Except String ConfidenceInput := do
+  let inputKind ← getReqStr j "input_kind"
+  match inputKind with
+  | "missing" => pure .missing
+  | "non_numeric" => pure .nonNumeric
+  | "non_finite" => pure .nonFinite
+  | "finite" =>
+    match ← getOptRat j "value" with
+    | some q => pure (.finite q)
+    | none => .error "finite input_kind requires numeric 'value'"
+  | other => .error s!"unknown input_kind: '{other}'"
+
+def parseProposedFieldInput (j : Json) : Except String ProposedFieldInput := do
+  let presStr ← getReqStr j "presence"
+  let pres ← parseEnum "FieldPresence" FieldPresence.fromString? presStr
+  let val ← match getOptField j "value" with
+    | none => pure .nullVal
+    | some vj => parseRuntimeValue vj
+  let conf ← match getOptField j "confidence_input" with
+    | none => pure .missing
+    | some cj => parseConfidenceInputObj cj
+  let cScale ← match ← getOptStr j "confidence_scale" with
+    | some s => pure s
+    | none => pure "0-1"
+  let cMethod ← getOptStr j "confidence_method"
+  let ev ← parseList j "evidence" parseProposedEvidenceInput
+  let ambig ← getOptBool j "ambiguous" false
+  let provFailed ← getOptBool j "provenance_failed" false
+  let errs ← parseList j "errors" parseDiagnosticIssue
+  let warns ← parseList j "warnings" parseDiagnosticIssue
+  pure {
+    presence := pres,
+    value := val,
+    confidence := conf,
+    confidenceScale := cScale,
+    confidenceMethod := cMethod,
+    evidence := ev,
+    ambiguous := ambig,
+    provenanceFailed := provFailed,
+    warnings := warns,
+    errors := errs
+  }
+
+def parseProposedRecordInput (j : Json) : Except String ProposedRecordInput := do
+  let fields ← match getOptField j "fields" with
+    | none => pure []
+    | some (.obj kvs) =>
+      kvs.toList.mapM fun (k, vj) => do
+        pure (k, ← parseProposedFieldInput vj)
+    | some _ => .error "expected object for 'fields'"
+  let part ← getOptBool j "partial" false
+  let failed ← getOptBool j "failed" false
+  let errs ← parseList j "errors" parseDiagnosticIssue
+  let warns ← parseList j "warnings" parseDiagnosticIssue
+  pure {
+    fields := fields, partialFlag := part, failed := failed,
+    errors := errs, warnings := warns
+  }
+
+def parseStrategyOutputInput (j : Json) : Except String StrategyOutputInput := do
+  let recs ← parseList j "records" parseProposedRecordInput
+  let part ← getOptBool j "partial" false
+  let failed ← getOptBool j "failed" false
+  let errs ← parseList j "errors" parseDiagnosticIssue
+  let warns ← parseList j "warnings" parseDiagnosticIssue
+  let dcm ← match ← getOptStr j "default_confidence_method" with
+    | some s => pure s
+    | none => pure "extraction-assessment"
+  pure {
+    records := recs, partialFlag := part, failed := failed,
+    errors := errs, warnings := warns, defaultConfidenceMethod := dcm
+  }
+
+private def optIntToJson : Option Int → Json
+  | none => Json.null
+  | some n => Json.num n
+
+private def optStrToJson : Option String → Json
+  | none => Json.null
+  | some s => Json.str s
+
+def locationToJson (loc : SourceLocation) : Json :=
+  Json.mkObj [
+    ("page", optIntToJson loc.page),
+    ("paragraph", optIntToJson loc.paragraph),
+    ("line_start", optIntToJson loc.lineStart),
+    ("line_end", optIntToJson loc.lineEnd),
+    ("char_start", optIntToJson loc.charStart),
+    ("char_end", optIntToJson loc.charEnd),
+    ("section", optStrToJson loc.sectionName)
+  ]
+
+def provenanceEvidenceToJson (ev : ProvenanceEvidence) : Json :=
+  Json.mkObj [
+    ("source_document_id", Json.str ev.sourceDocumentId),
+    ("relationship", Json.str ev.relationship.toString),
+    ("evidence", Json.str ev.evidence),
+    ("truncated", Json.bool ev.truncated),
+    ("location", match ev.location with | none => Json.null | some loc => locationToJson loc)
+  ]
+
+private def fieldPresenceToString : FieldPresence → String
+  | .present => "present"
+  | .missing => "missing"
+
+private def diagPairToJson (d : DiagnosticIssue) : Json :=
+  Json.mkObj [
+    ("field_path", optStrToJson d.fieldPath),
+    ("code", Json.str d.code)
+  ]
+
 private def dummyValidationError : DiagnosticIssue :=
   { code := "err", severity := .error, stage := .validation, message := "validation error" }
 
@@ -656,6 +808,85 @@ def evaluateOracleRequest (req : Json) : Except String Json := do
       ("ok", true),
       ("status", out.status.toString),
       ("codes", Json.arr codesJson.toArray)
+    ])
+  | "location_from_span" =>
+    let segs ← parseList payload "segments" parseDocumentSegment
+    let cs ← (← payload.getObjVal? "char_start").getInt?
+    let ce ← (← payload.getObjVal? "char_end").getInt?
+    let loc := locationFromSpan segs cs ce
+    pure (Json.mkObj [("ok", true), ("location", locationToJson loc)])
+  | "associate_provenance" =>
+    let docId ← getReqStr payload "doc_id"
+    let segs ← parseList payload "segments" parseDocumentSegment
+    let fieldName ← getReqStr payload "field_name"
+    let presStr ← getReqStr payload "presence"
+    let pres ← parseEnum "FieldPresence" FieldPresence.fromString? presStr
+    let recordId ← match ← getOptStr payload "record_id" with
+      | some s => pure s
+      | none => pure "record-001"
+    let maxChars ← match getOptField payload "max_excerpt_chars" with
+      | none => pure 500
+      | some mj => mj.getNat?
+    let items ← parseList payload "proposed_evidence" parseProposedEvidenceInput
+    let (evList, warns) := associateEvidence docId segs fieldName pres recordId maxChars items
+    pure (Json.mkObj [
+      ("ok", true),
+      ("evidence", Json.arr (evList.map provenanceEvidenceToJson).toArray),
+      ("warning_codes", Json.arr (warns.map (fun w => Json.str w.code)).toArray)
+    ])
+  | "build_result" =>
+    let extractionId ← getReqStr payload "extraction_id"
+    let sourceJson ← payload.getObjVal? "source"
+    let source ← parseSourceMetadata sourceJson
+    let segs ← parseList payload "segments" parseDocumentSegment
+    let schemaJson ← payload.getObjVal? "schema"
+    let schema ← parseExtractionSchema schemaJson
+    let rules ← parseSchemaRules schemaJson
+    let docWarns ← parseList payload "document_warnings" parseDiagnosticIssue
+    let stratJson ← payload.getObjVal? "strategy_output"
+    let stratOut ← parseStrategyOutputInput stratJson
+    let patternMap : List (String × Bool) ← match getOptField payload "pattern_results" with
+      | none => pure []
+      | some (.obj kvs) =>
+        kvs.toList.mapM fun (k, vj) => do
+          pure (k, ← vj.getBool?)
+      | some _ => .error "expected object or null for 'pattern_results'"
+    let pm : PatternMatcher := fun fp _ =>
+      match patternMap.find? (fun kv => kv.1 == fp) with
+      | some (_, matched) => matched
+      | none => true
+    let maxChars ← match getOptField payload "max_excerpt_chars" with
+      | none => pure 500
+      | some mj => mj.getNat?
+    let res := buildResult pm extractionId source segs schema rules docWarns stratOut maxChars
+    let recordsJson : List Json := res.records.map fun rec =>
+      let fieldsJson : Json := Json.mkObj (rec.fields.map fun (fname, f) =>
+        (fname, Json.mkObj [
+          ("presence", Json.str (fieldPresenceToString f.presence)),
+          ("is_null", Json.bool (f.value == .nullValue)),
+          ("validation_status", Json.str f.validation.status.toString),
+          ("provenance_relationships",
+            Json.arr (f.provenance.map (fun ev => Json.str ev.relationship.toString)).toArray),
+          ("error_codes", Json.arr (f.errors.map (fun e => Json.str e.code)).toArray),
+          ("warning_codes", Json.arr (f.warnings.map (fun w => Json.str w.code)).toArray)
+        ]))
+      Json.mkObj [
+        ("record_id", Json.str rec.recordId),
+        ("status", Json.str rec.status.toString),
+        ("validation_status", Json.str rec.validation.status.toString),
+        ("validation_errors", Json.arr (rec.validation.errors.map diagPairToJson).toArray),
+        ("warning_codes", Json.arr (rec.warnings.map (fun w => Json.str w.code)).toArray),
+        ("fields", fieldsJson)
+      ]
+    pure (Json.mkObj [
+      ("ok", true),
+      ("valid_contract", Json.bool (isValidExtractionResult res)),
+      ("status", Json.str res.status.toString),
+      ("validation_status", Json.str res.validation.status.toString),
+      ("validation_errors", Json.arr (res.validation.errors.map diagPairToJson).toArray),
+      ("error_codes", Json.arr (res.errors.map (fun e => Json.str e.code)).toArray),
+      ("warning_codes", Json.arr (res.warnings.map (fun w => Json.str w.code)).toArray),
+      ("records", Json.arr recordsJson.toArray)
     ])
   | other => .error s!"unknown oracle kind: '{other}'"
 

@@ -2,7 +2,7 @@
   Executable Lake testDriver (`structa-axiom-audit`) performing two kernel-level checks:
   1. Independent kernel proof replay (`Lean.Environment.replay`): replays every declaration and
      proof term in `StructaFormal` from scratch against a clean `Init` kernel environment.
-  2. Programmatic axiom & theorem-inventory audit (`Lean.collectAxioms`): verifies all 108 required
+  2. Programmatic axiom & theorem-inventory audit (`Lean.collectAxioms`): verifies all 134 required
      theorems exist in the replayed kernel environment and depend ONLY on Lean's standard core
      axioms (`propext`, `Classical.choice`, `Quot.sound`) with zero `sorryAx` and zero custom axioms.
 -/
@@ -15,8 +15,8 @@ open Lean
 private def allowedAxioms : List Name :=
   [``propext, ``Classical.choice, ``Quot.sound]
 
-/-- Complete registry of all 108 required machine-checked theorems
-    (46 Contract v1.0 + 32 Schema & Validation + 30 Cross-Field & Conditional Rules). -/
+/-- Complete registry of all 134 required machine-checked theorems
+    (46 Contract v1.0 + 32 Schema & Validation + 30 Cross-Field Rules + 26 Provenance & Assembly). -/
 private def requiredTheorems : List Name := [
   -- 1. Field Invariants (4)
   ``StructaFormal.missing_field_has_no_value,
@@ -138,7 +138,35 @@ private def requiredTheorems : List Name := [
   ``StructaFormal.conditional_rule_inert_when_condition_false,
   ``StructaFormal.conditional_is_missing_distinct_from_present_null,
   ``StructaFormal.conditional_required_if_honors_nullable_and_forbidden_if_semantics,
-  ``StructaFormal.group_presence_mutually_exclusive_and_at_least_one_semantics
+  ``StructaFormal.group_presence_mutually_exclusive_and_at_least_one_semantics,
+  -- 14. Provenance Association & Source-Span Mapping (13)
+  ``StructaFormal.location_from_span_is_valid_source_location,
+  ``StructaFormal.location_from_span_clamps_reversed_lines,
+  ``StructaFormal.location_from_span_fallback_when_no_overlap,
+  ``StructaFormal.bound_excerpt_length_and_truncation,
+  ``StructaFormal.parse_relationship_unknown_defaults_to_direct,
+  ``StructaFormal.associate_evidence_is_deterministic,
+  ``StructaFormal.associate_evidence_rejects_foreign_with_warning,
+  ``StructaFormal.associate_evidence_skips_blank_quote,
+  ``StructaFormal.associate_evidence_unlocated_is_unverified_with_warning,
+  ``StructaFormal.associate_evidence_direct_conflict_downgrades_with_warning,
+  ``StructaFormal.associate_evidence_non_direct_or_missing_never_conflicts,
+  ``StructaFormal.associate_evidence_all_entries_valid_and_bound,
+  ``StructaFormal.associate_evidence_all_warnings_are_provenance_warnings,
+  -- 15. Full ResultBuilder Assembly & Strategy-to-Contract Firewall Soundness (13)
+  ``StructaFormal.format_record_id_injective_and_nonempty,
+  ``StructaFormal.build_result_record_ids_pairwise_unique,
+  ``StructaFormal.build_record_sanitizes_missing_field_value,
+  ``StructaFormal.build_record_ambiguous_emits_extraction_warning,
+  ``StructaFormal.build_record_isolates_provenance_failure,
+  ``StructaFormal.build_record_fields_all_valid_contract,
+  ``StructaFormal.build_record_is_valid_extracted_record,
+  ``StructaFormal.build_result_empty_failed_synthesizes_extraction_failed,
+  ``StructaFormal.build_result_failed_with_records_is_partial_and_validated,
+  ``StructaFormal.build_result_propagates_only_validation_record_warnings,
+  ``StructaFormal.build_result_preserves_provenance_document_binding,
+  ``StructaFormal.build_result_is_deterministic,
+  ``StructaFormal.build_result_satisfies_valid_extraction_result
 ]
 
 def main : IO UInt32 := do
@@ -153,7 +181,7 @@ def main : IO UInt32 := do
       newConstants := newConstants.insert name cinfo
   let replayedKernelEnv ← Lean.Kernel.Environment.replay newConstants baseEnv.toKernelEnv
 
-  -- Stage 2: Audit all 108 required theorems (kernel-accepted + core axioms only).
+  -- Stage 2: Audit all 134 required theorems (kernel-accepted + core axioms only).
   let mut failures : List String := []
   let mut observedAxioms : List Name := []
   for thm in requiredTheorems do

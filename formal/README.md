@@ -1,6 +1,6 @@
 # Structa Formal Assurance Layer (`formal/`)
 
-Independent **Lean 4** formal specification and theorem-proving project for Structa's **Canonical Output Record Contract v1.0**, **Schema Well-Formedness**, **Deterministic Validation Semantics**, and **Declarative Cross-Field & Conditional Validation Rules**.
+Independent **Lean 4** formal specification and theorem-proving project for Structa's **Canonical Output Record Contract v1.0**, **Schema Well-Formedness**, **Deterministic Validation Semantics**, **Declarative Cross-Field & Conditional Validation Rules**, **Provenance Association & Source-Span Mapping**, and **Full `ResultBuilder` Assembly & Firewall Soundness**.
 
 > **Zero runtime dependency**: `formal/` is strictly a development-time and CI-time assurance layer. It is excluded from `structa-maestro` Python wheel and source distributions and is never imported or invoked at runtime by `structa_maestro`.
 
@@ -20,7 +20,7 @@ lake test
 ```
 
 - `lake build` compiles `StructaFormal`, `structa-formal-oracle`, and `structa-axiom-audit` with `warningAsError = true` (any `sorry` or warning fails the build).
-- `lake test` runs `structa-axiom-audit`, which replays every declaration in `StructaFormal` from scratch against a clean `Init` kernel environment (`Lean.Kernel.Environment.replay`) and programmatically audits all **108** required theorems (46 Contract v1.0 + 32 Schema & Deterministic Validation + 30 Cross-Field & Conditional Rules) via `Lean.collectAxioms` to confirm they depend only on Lean's standard core axioms (`propext`, `Classical.choice`, `Quot.sound`) with zero `sorryAx`.
+- `lake test` runs `structa-axiom-audit`, which replays every declaration in `StructaFormal` from scratch against a clean `Init` kernel environment (`Lean.Kernel.Environment.replay`) and programmatically audits all **134** required theorems (46 Contract v1.0 + 32 Schema & Deterministic Validation + 30 Cross-Field & Conditional Rules + 26 Provenance Association & Full Result Assembly) via `Lean.collectAxioms` to confirm they depend only on Lean's standard core axioms (`propext`, `Classical.choice`, `Quot.sound`) with zero `sorryAx`.
 
 ## Run Two-Layer Python Conformance Tests
 
