@@ -27,6 +27,13 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 from pydantic import ValidationError
+from tests.conformance.cross_field_reference import (
+    build_cross_field_schema_well_formed_vectors,
+    build_curated_cross_field_eval_cases,
+    build_invoice_cross_field_schema,
+    encode_schema_with_rules,
+    instantiate_python_schema_with_rules_from_vector,
+)
 from tests.conformance.reference_model import (
     build_confidence_vectors,
     build_extracted_field_vectors,
@@ -734,3 +741,158 @@ def test_property_lean_oracle_differential_validate_record(
         (e.field_path, e.code) for e in py_rec.errors
     ]
     assert resp["field_statuses"] == {k: v.status.value for k, v in py_fields.items()}
+
+
+# ---------------------------------------------------------------------------
+# Spec 014 — Cross-Field & Conditional Validation Rules Differential Checks
+# ---------------------------------------------------------------------------
+
+
+def _python_accepts_schema_with_rules(vec: dict[str, Any]) -> bool:
+    try:
+        instantiate_python_schema_with_rules_from_vector(vec)
+        return True
+    except (SchemaDefinitionError, ValueError):
+        return False
+
+
+def test_lean_oracle_matches_python_cross_field_rule_well_formedness() -> None:
+    """Differential check of all curated valid/invalid cross-field rule-schema vectors."""
+    vectors = build_cross_field_schema_well_formed_vectors()
+    requests = [{"kind": "schema_well_formed", "payload": vec} for vec, _ in vectors]
+    responses = _query_lean_oracle(requests)
+
+    for (vec, expected), resp in zip(vectors, responses, strict=True):
+        assert resp["ok"] is True
+        lean_valid = resp["valid"]
+        python_valid = _python_accepts_schema_with_rules(vec)
+        assert lean_valid is expected, f"Lean mismatch for cross-field schema_well_formed: {vec}"
+        assert python_valid is lean_valid, (
+            f"Python/Lean divergence for cross-field schema_well_formed: "
+            f"python={python_valid} lean={lean_valid} vec={vec}"
+        )
+
+
+def test_lean_oracle_matches_python_cross_field_validation_curated() -> None:
+    """Differential check of DeterministicValidator.validate_record with declarative rules.
+
+    Asserts 100% agreement on record status, per-field statuses, ordered `(field_path, code)`
+    errors, AND ordered `(field_path, code)` warnings.
+    """
+    validator = DeterministicValidator()
+    cases = build_curated_cross_field_eval_cases()
+    requests = [
+        {
+            "kind": "validate_record",
+            "payload": {
+                "schema": encode_schema_with_rules(schema),
+                "record_id": "cf-1",
+                "fields": encode_record_fields(fields),
+                "pattern_results": {},
+            },
+        }
+        for _, schema, fields in cases
+    ]
+    responses = _query_lean_oracle(requests)
+
+    for (name, schema, fields), resp in zip(cases, responses, strict=True):
+        assert resp["ok"] is True
+        py_res = validator.validate_record(fields, schema, record_id="cf-1")
+        py_errors = [(e.field_path, e.code) for e in py_res.record_outcome.errors]
+        py_warnings = [(w.field_path, w.code) for w in py_res.warnings]
+        py_field_statuses = {k: v.status.value for k, v in py_res.field_outcomes.items()}
+
+        lean_errors = [(e["field_path"], e["code"]) for e in resp["errors"]]
+        lean_warnings = [(w["field_path"], w["code"]) for w in resp["warnings"]]
+
+        assert resp["status"] == py_res.record_outcome.status.value, (
+            f"[{name}] status mismatch: "
+            f"lean={resp['status']} py={py_res.record_outcome.status.value}"
+        )
+        assert lean_errors == py_errors, (
+            f"[{name}] errors mismatch: lean={lean_errors} py={py_errors}"
+        )
+        assert lean_warnings == py_warnings, (
+            f"[{name}] warnings mismatch: lean={lean_warnings} py={py_warnings}"
+        )
+        assert resp["field_statuses"] == py_field_statuses, (
+            f"[{name}] field_statuses mismatch: "
+            f"lean={resp['field_statuses']} py={py_field_statuses}"
+        )
+
+
+@pytest.mark.property
+@settings(max_examples=30, deadline=None)
+@given(
+    subtotal=st.one_of(
+        st.none(),
+        st.sampled_from([Decimal("100.00"), Decimal("50.00"), Decimal("NaN"), True, "100"]),
+    ),
+    tax_pres=st.sampled_from([FieldPresence.PRESENT, FieldPresence.MISSING]),
+    tax_val=st.sampled_from([None, Decimal("10.00"), Decimal("0.00")]),
+    total=st.sampled_from(
+        [Decimal("100.00"), Decimal("110.00"), Decimal("110.01"), Decimal("110.05")]
+    ),
+    pm_pres=st.sampled_from([FieldPresence.PRESENT, FieldPresence.MISSING]),
+    pm_val=st.sampled_from([None, "invoice", "wire", "card"]),
+    po_val=st.sampled_from([None, "PO-1"]),
+    note_val=st.sampled_from([None, "ok"]),
+    ssn_val=st.sampled_from([None, "123"]),
+    ein_val=st.sampled_from([None, "99-1"]),
+    due_day=st.sampled_from([date(2026, 1, 5), date(2026, 1, 10), date(2026, 2, 1)]),
+)
+def test_property_lean_oracle_differential_cross_field_rules(
+    subtotal: Any,
+    tax_pres: FieldPresence,
+    tax_val: Any,
+    total: Decimal,
+    pm_pres: FieldPresence,
+    pm_val: Any,
+    po_val: Any,
+    note_val: Any,
+    ssn_val: Any,
+    ein_val: Any,
+    due_day: date,
+) -> None:
+    """Hypothesis differential property check: Python cross-field rules == Lean oracle."""
+    schema = build_invoice_cross_field_schema()
+    fields: dict[str, tuple[FieldPresence, Any]] = {
+        "issue_date": (FieldPresence.PRESENT, date(2026, 1, 10)),
+        "due_date": (FieldPresence.PRESENT, due_day),
+        "subtotal": (
+            FieldPresence.MISSING if subtotal is None else FieldPresence.PRESENT,
+            subtotal,
+        ),
+        "tax": (tax_pres, None if tax_pres == FieldPresence.MISSING else tax_val),
+        "total": (FieldPresence.PRESENT, total),
+        "payment_method": (pm_pres, None if pm_pres == FieldPresence.MISSING else pm_val),
+        "po_number": (FieldPresence.MISSING if po_val is None else FieldPresence.PRESENT, po_val),
+        "nullable_note": (FieldPresence.PRESENT, note_val),
+        "ssn": (FieldPresence.MISSING if ssn_val is None else FieldPresence.PRESENT, ssn_val),
+        "ein": (FieldPresence.MISSING if ein_val is None else FieldPresence.PRESENT, ein_val),
+    }
+    validator = DeterministicValidator()
+    py_res = validator.validate_record(fields, schema, record_id="prop-cf")
+    resp = _query_lean_oracle(
+        [
+            {
+                "kind": "validate_record",
+                "payload": {
+                    "schema": encode_schema_with_rules(schema),
+                    "record_id": "prop-cf",
+                    "fields": encode_record_fields(fields),
+                    "pattern_results": {},
+                },
+            }
+        ]
+    )[0]
+
+    assert resp["ok"] is True
+    assert resp["status"] == py_res.record_outcome.status.value
+    assert [(e["field_path"], e["code"]) for e in resp["errors"]] == [
+        (e.field_path, e.code) for e in py_res.record_outcome.errors
+    ]
+    assert [(w["field_path"], w["code"]) for w in resp["warnings"]] == [
+        (w.field_path, w.code) for w in py_res.warnings
+    ]
+    assert resp["field_statuses"] == {k: v.status.value for k, v in py_res.field_outcomes.items()}

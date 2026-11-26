@@ -25,7 +25,7 @@ flowchart TD
     S3 -.-> Telemetry
     S4 -.-> Telemetry
 
-    Formal["Dev/CI Formal Assurance Layer (formal/, Lean 4 + Lake)\n78 machine-checked theorems + Kernel.Environment.replay + Two-layer Conformance\nZero runtime dependency (excluded from wheels & sdists)"]
+    Formal["Dev/CI Formal Assurance Layer (formal/, Lean 4 + Lake)\n108 machine-checked theorems + Kernel.Environment.replay + Two-layer Conformance\nZero runtime dependency (excluded from wheels & sdists)"]
     Formal -. "Formal model & differential conformance" .-> Contract
 ```
 
@@ -42,7 +42,7 @@ flowchart TD
 | **4. Quality & Assembly** | `provenance`, `confidence`, `validation`, `builder` | Quote verification & location mapping, uncalibrated confidence normalization, non-coercing deterministic validation, and honest status assembly | Isolated warnings/errors; never promotes `partial`/`failed` to `completed` |
 | **5. Strict Typed Binding** | `structa_maestro.binding` | Optional post-extraction projection (`bind_record` / `bind_records`) using `strict=True` Pydantic v2 validation | Privacy-safe `RecordBindingError` (never leaks raw values) |
 | **Observability (Orthogonal)** | `structa_maestro.telemetry` | Correlated, basename-sanitized, zero-PII lifecycle events, stage timings, live `BatchProgress`, and cumulative `StrategyTelemetry` | Observer `Exception`s isolated & scrubbed; `CancelledError` propagates |
-| **Formal Assurance (Dev/CI)** | `formal/` + `tests/conformance/` | Lean 4 mathematical specification of Contract `v1.0`, Schema Well-Formedness & Deterministic Validation (78 theorems, `Kernel.Environment.replay`, two-layer conformance) | CI & release gates; zero Python runtime dependency |
+| **Formal Assurance (Dev/CI)** | `formal/` + `tests/conformance/` | Lean 4 mathematical specification of Contract `v1.0`, Schema Well-Formedness, Deterministic Validation & Cross-Field Rules (108 theorems, `Kernel.Environment.replay`, two-layer conformance) | CI & release gates; zero Python runtime dependency |
 
 ## Key Architectural Decisions
 
