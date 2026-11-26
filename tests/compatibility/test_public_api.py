@@ -11,7 +11,10 @@ import structa_maestro as sm
 
 
 def test_public_api_exports_and_version() -> None:
+    repo_root = Path(__file__).parent.parent.parent
+    pyproject = tomllib.loads((repo_root / "pyproject.toml").read_text(encoding="utf-8"))
     assert isinstance(sm.__version__, str) and sm.__version__
+    assert sm.__version__ == pyproject["project"]["version"]
     for symbol in (
         "CONTRACT_VERSION",
         "ExtractionEngine",

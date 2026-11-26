@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-26
+
 ### Added
 - **Native Google Gemini Sync & Async Extraction Strategies (`GeminiLLMStrategy`, `AsyncGeminiLLMStrategy`, CLI `--provider gemini`)**:
   - Added hardened, zero-extra-dependency `GeminiLLMStrategy` (`httpx.Client`) and `AsyncGeminiLLMStrategy` (`httpx.AsyncClient` + non-blocking `asyncio.sleep`) in `src/structa_maestro/strategies/llm_gemini.py` targeting Google Gemini's native `POST {base_url}/v1beta/models/{model}:generateContent` endpoint strictly behind Structa's Strategy-to-Contract Firewall (zero Gemini wire-field leakage; Contract `v1.0` unchanged).
