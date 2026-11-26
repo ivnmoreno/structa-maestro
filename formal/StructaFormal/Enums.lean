@@ -67,6 +67,43 @@ inductive PipelineStage where
   | serialization
   deriving DecidableEq, Repr
 
+/-- Comparison operators for declarative cross-field rules (`ComparisonOperator`). -/
+inductive ComparisonOperator where
+  | eq
+  | ne
+  | lt
+  | lte
+  | gt
+  | gte
+  deriving DecidableEq, Repr
+
+/-- Predicate operators for controlling fields in conditional presence rules (`ConditionOperator`). -/
+inductive ConditionOperator where
+  | isPresent
+  | isMissing
+  | equals
+  | notEquals
+  | inValues
+  deriving DecidableEq, Repr
+
+/-- Diagnostic severity emitted when a cross-field rule is violated (`RuleSeverity`). -/
+inductive RuleSeverity where
+  | error
+  | warning
+  deriving DecidableEq, Repr
+
+/-- Kinds of conditional presence rules (`ConditionalPresenceKind`). -/
+inductive ConditionalPresenceKind where
+  | requiredIf
+  | forbiddenIf
+  deriving DecidableEq, Repr
+
+/-- Kinds of multi-field group presence rules (`GroupPresenceKind`). -/
+inductive GroupPresenceKind where
+  | mutuallyExclusive
+  | atLeastOneOf
+  deriving DecidableEq, Repr
+
 def FieldType.fromString? : String → Option FieldType
   | "string" => some .string
   | "integer" => some .integer
@@ -139,6 +176,65 @@ def PipelineStage.fromString? : String → Option PipelineStage
   | "provenance" => some .provenance
   | "validation" => some .validation
   | "serialization" => some .serialization
+  | _ => none
+
+def ComparisonOperator.toString : ComparisonOperator → String
+  | .eq => "eq"
+  | .ne => "ne"
+  | .lt => "lt"
+  | .lte => "lte"
+  | .gt => "gt"
+  | .gte => "gte"
+
+def ComparisonOperator.fromString? : String → Option ComparisonOperator
+  | "eq" => some .eq
+  | "ne" => some .ne
+  | "lt" => some .lt
+  | "lte" => some .lte
+  | "gt" => some .gt
+  | "gte" => some .gte
+  | _ => none
+
+def ConditionOperator.toString : ConditionOperator → String
+  | .isPresent => "is_present"
+  | .isMissing => "is_missing"
+  | .equals => "equals"
+  | .notEquals => "not_equals"
+  | .inValues => "in"
+
+def ConditionOperator.fromString? : String → Option ConditionOperator
+  | "is_present" => some .isPresent
+  | "is_missing" => some .isMissing
+  | "equals" => some .equals
+  | "not_equals" => some .notEquals
+  | "in" => some .inValues
+  | _ => none
+
+def RuleSeverity.toString : RuleSeverity → String
+  | .error => "error"
+  | .warning => "warning"
+
+def RuleSeverity.fromString? : String → Option RuleSeverity
+  | "error" => some .error
+  | "warning" => some .warning
+  | _ => none
+
+def ConditionalPresenceKind.toString : ConditionalPresenceKind → String
+  | .requiredIf => "required_if"
+  | .forbiddenIf => "forbidden_if"
+
+def ConditionalPresenceKind.fromString? : String → Option ConditionalPresenceKind
+  | "required_if" => some .requiredIf
+  | "forbidden_if" => some .forbiddenIf
+  | _ => none
+
+def GroupPresenceKind.toString : GroupPresenceKind → String
+  | .mutuallyExclusive => "mutually_exclusive"
+  | .atLeastOneOf => "at_least_one_of"
+
+def GroupPresenceKind.fromString? : String → Option GroupPresenceKind
+  | "mutually_exclusive" => some .mutuallyExclusive
+  | "at_least_one_of" => some .atLeastOneOf
   | _ => none
 
 end StructaFormal

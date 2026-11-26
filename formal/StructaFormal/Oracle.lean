@@ -13,6 +13,8 @@ import StructaFormal.ProvenanceInvariants
 import StructaFormal.StatusAssembly
 import StructaFormal.SchemaModels
 import StructaFormal.DeterministicValidation
+import StructaFormal.CrossFieldModels
+import StructaFormal.CrossFieldValidation
 
 namespace StructaFormal
 
@@ -385,6 +387,92 @@ def parseRecordFieldInput (j : Json) : Except String RecordFieldInput := do
       pure (k, (pres, val))
   | _ => .error "expected object for 'fields'"
 
+private def parseRuleSeverityOpt (j : Json) : Except String RuleSeverity := do
+  match ← getOptStr j "severity" with
+  | none => pure .error
+  | some s => parseEnum "RuleSeverity" RuleSeverity.fromString? s
+
+def parseArithmeticTerm (j : Json) : Except String ArithmeticTerm := do
+  let field ← getReqStr j "field"
+  let sign ← match getOptField j "sign" with
+    | none => pure (1 : Int)
+    | some sj => sj.getInt?
+  let itemField ← getOptStr j "item_field"
+  let tmaz ← getOptBool j "treat_missing_as_zero" false
+  pure { field := field, sign := sign, itemField := itemField, treatMissingAsZero := tmaz }
+
+def parseFieldCondition (j : Json) : Except String FieldCondition := do
+  let field ← getReqStr j "field"
+  let opStr ← getReqStr j "operator"
+  let op ← parseEnum "ConditionOperator" ConditionOperator.fromString? opStr
+  let val ← match getOptField j "value" with
+    | none => pure none
+    | some vj => some <$> parseRuntimeValue vj
+  let vals ← match getOptField j "values" with
+    | none => pure none
+    | some (.arr elems) => some <$> elems.toList.mapM parseRuntimeValue
+    | some _ => .error "expected array or null for 'values'"
+  pure { field := field, operator := op, value := val, values := vals }
+
+def parseValidationRule (j : Json) : Except String ValidationRule := do
+  let rtype ← getReqStr j "rule_type"
+  let ruleId ← getReqStr j "rule_id"
+  let sev ← parseRuleSeverityOpt j
+  let msg ← getOptStr j "message"
+  match rtype with
+  | "comparison" =>
+    let leftField ← getReqStr j "left_field"
+    let opStr ← getReqStr j "operator"
+    let op ← parseEnum "ComparisonOperator" ComparisonOperator.fromString? opStr
+    let rightField ← getReqStr j "right_field"
+    pure (.comparison {
+      ruleId := ruleId, leftField := leftField, operator := op,
+      rightField := rightField, severity := sev, message := msg
+    })
+  | "arithmetic" =>
+    let terms ← match getOptField j "terms" with
+      | none => pure []
+      | some (.arr elems) => elems.toList.mapM parseArithmeticTerm
+      | some _ => .error "expected array for 'terms'"
+    let targetField ← getReqStr j "target_field"
+    let tol ← match ← getOptRat j "tolerance" with
+      | none => pure (0 : Rat)
+      | some q => pure q
+    pure (.arithmetic {
+      ruleId := ruleId, terms := terms, targetField := targetField,
+      tolerance := tol, severity := sev, message := msg
+    })
+  | "conditional_presence" =>
+    let kindStr ← getReqStr j "kind"
+    let kind ← parseEnum "ConditionalPresenceKind" ConditionalPresenceKind.fromString? kindStr
+    let whenJson ← j.getObjVal? "when"
+    let whenCond ← parseFieldCondition whenJson
+    let targetFields ← match getOptField j "target_fields" with
+      | none => pure []
+      | some (.arr elems) => elems.toList.mapM (fun e => e.getStr?)
+      | some _ => .error "expected string array for 'target_fields'"
+    pure (.conditionalPresence {
+      ruleId := ruleId, kind := kind, when := whenCond,
+      targetFields := targetFields, severity := sev, message := msg
+    })
+  | "group_presence" =>
+    let kindStr ← getReqStr j "kind"
+    let kind ← parseEnum "GroupPresenceKind" GroupPresenceKind.fromString? kindStr
+    let fields ← match getOptField j "fields" with
+      | none => pure []
+      | some (.arr elems) => elems.toList.mapM (fun e => e.getStr?)
+      | some _ => .error "expected string array for 'fields'"
+    pure (.groupPresence {
+      ruleId := ruleId, kind := kind, fields := fields, severity := sev, message := msg
+    })
+  | other => .error s!"unknown rule_type: '{other}'"
+
+def parseSchemaRules (j : Json) : Except String (List ValidationRule) :=
+  match getOptField j "rules" with
+  | none => .ok []
+  | some (.arr elems) => elems.toList.mapM parseValidationRule
+  | some _ => .error "expected array or null for 'rules'"
+
 private def dummyValidationError : DiagnosticIssue :=
   { code := "err", severity := .error, stage := .validation, message := "validation error" }
 
@@ -503,12 +591,14 @@ def evaluateOracleRequest (req : Json) : Except String Json := do
         ("has_location", ev.location.isSome)
       ])
   | "schema_well_formed" =>
-    match parseExtractionSchema payload with
-    | .ok schema => pure (Json.mkObj [("ok", true), ("valid", isValidExtractionSchema schema)])
-    | .error _ => pure (Json.mkObj [("ok", true), ("valid", false)])
+    match parseExtractionSchema payload, parseSchemaRules payload with
+    | .ok schema, .ok rules =>
+      pure (Json.mkObj [("ok", true), ("valid", isValidSchemaWithRules schema rules)])
+    | _, _ => pure (Json.mkObj [("ok", true), ("valid", false)])
   | "validate_record" =>
     let schemaJson ← payload.getObjVal? "schema"
     let schema ← parseExtractionSchema schemaJson
+    let rules ← parseSchemaRules schemaJson
     let recordId ← match getOptStr payload "record_id" with
       | .ok (some s) => pure s
       | .ok none => pure "record-001"
@@ -525,11 +615,17 @@ def evaluateOracleRequest (req : Json) : Except String Json := do
       match patternMap.find? (fun kv => kv.1 == fp) with
       | some (_, matched) => matched
       | none => true
-    let (recOutcome, fieldOutcomes) := validateRecord pm fields schema recordId
+    let (recOutcome, fieldOutcomes, ruleWarnings) :=
+      validateRecordWithRules pm fields schema rules recordId
     let errorsJson : List Json := recOutcome.errors.map fun e =>
       Json.mkObj [
         ("field_path", match e.fieldPath with | some s => Json.str s | none => Json.null),
         ("code", Json.str e.code)
+      ]
+    let warningsJson : List Json := ruleWarnings.map fun w =>
+      Json.mkObj [
+        ("field_path", match w.fieldPath with | some s => Json.str s | none => Json.null),
+        ("code", Json.str w.code)
       ]
     let fieldStatusesJson : Json :=
       Json.mkObj (fieldOutcomes.map fun (k, o) => (k, Json.str o.status.toString))
@@ -537,6 +633,7 @@ def evaluateOracleRequest (req : Json) : Except String Json := do
       ("ok", true),
       ("status", recOutcome.status.toString),
       ("errors", Json.arr errorsJson.toArray),
+      ("warnings", Json.arr warningsJson.toArray),
       ("field_statuses", fieldStatusesJson)
     ])
   | "validate_result_cardinality" =>
