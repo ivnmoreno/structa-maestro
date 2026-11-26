@@ -2,21 +2,21 @@
 
 All stable public symbols are exported from the top-level `structa_maestro` package.
 
-[Entry Points](#library-entry-points) • [Schema Definition](#schema-definition) • [Typed Binding](#strict-opt-in-typed-record-binding-bind_record-bind_records) • [Strategies](#strategies--reliability-policies) • [Observability](#observability--privacy-safe-telemetry) • [Canonical Contract](#canonical-output--serialization) • [Exceptions](#exceptions) • [Diagnostics](#extraction-strategy-diagnostic-codes-pipelinestageextraction) • [Thin CLI](#thin-cli-structa-maestro)
+[Entry Points](#library-entry-points) • [Schema Definition](#schema-definition) • [Typed Binding](#strict-opt-in-typed-record-binding-bind_record-bind_records) • [Strategies](#strategies--reliability-policies) • [Confidence Calibration](#empirical-confidence-calibration-opt-in) • [Observability](#observability--privacy-safe-telemetry) • [Canonical Contract](#canonical-output--serialization) • [Exceptions](#exceptions) • [Diagnostics](#extraction-strategy-diagnostic-codes-pipelinestageextraction) • [Thin CLI](#thin-cli-structa-maestro)
 
 ## Library Entry Points
 
-- `ExtractionEngine(strategy: ExtractionStrategy | AsyncExtractionStrategy, *, limits=None, result_builder=None, observers=None)`
-  - `.extract(document: str | Path | DocumentInput, schema: ExtractionSchema | Mapping[str, Any], *, document_id: str | None = None, observers: Sequence[ExtractionObserver] | None = None) -> ExtractionResult`
-  - `.extract_batch(documents: Sequence[str | Path | BatchDocumentInput | DocumentInput], schema: ExtractionSchema | Mapping[str, Any], *, options: BatchOptions | None = None, observers: Sequence[ExtractionObserver] | None = None) -> BatchExtractionResult`
-  - `async .aextract(document: str | Path | DocumentInput, schema: ExtractionSchema | Mapping[str, Any], *, document_id: str | None = None, observers: Sequence[ExtractionObserver | AsyncExtractionObserver] | None = None) -> ExtractionResult`
-  - `async .aextract_batch(documents: Sequence[str | Path | BatchDocumentInput | DocumentInput], schema: ExtractionSchema | Mapping[str, Any], *, options: BatchOptions | None = None, observers: Sequence[ExtractionObserver | AsyncExtractionObserver] | None = None) -> BatchExtractionResult`
-  - Calling synchronous `.extract(...)` / `.extract_batch(...)` with an async-only strategy or async-only observer raises `ConfigurationError` eagerly. `.aextract(...)` / `.aextract_batch(...)` accept both native `AsyncExtractionStrategy` and synchronous `ExtractionStrategy` (offloaded via `asyncio.to_thread`), prefer native `aextract_raw` / `aon_event` on dual-protocol implementations, and propagate `asyncio.CancelledError` cleanly (cancelling in-flight batch tasks).
+- `ExtractionEngine(strategy: ExtractionStrategy | AsyncExtractionStrategy, *, limits=None, result_builder=None, observers=None, calibrator=None)`
+  - `.extract(document: str | Path | DocumentInput, schema: ExtractionSchema | Mapping[str, Any], *, document_id: str | None = None, observers: Sequence[ExtractionObserver] | None = None, calibrator: ConfidenceCalibrator | None = None) -> ExtractionResult`
+  - `.extract_batch(documents: Sequence[str | Path | BatchDocumentInput | DocumentInput], schema: ExtractionSchema | Mapping[str, Any], *, options: BatchOptions | None = None, observers: Sequence[ExtractionObserver] | None = None, calibrator: ConfidenceCalibrator | None = None) -> BatchExtractionResult`
+  - `async .aextract(document: str | Path | DocumentInput, schema: ExtractionSchema | Mapping[str, Any], *, document_id: str | None = None, observers: Sequence[ExtractionObserver | AsyncExtractionObserver] | None = None, calibrator: ConfidenceCalibrator | None = None) -> ExtractionResult`
+  - `async .aextract_batch(documents: Sequence[str | Path | BatchDocumentInput | DocumentInput], schema: ExtractionSchema | Mapping[str, Any], *, options: BatchOptions | None = None, observers: Sequence[ExtractionObserver | AsyncExtractionObserver] | None = None, calibrator: ConfidenceCalibrator | None = None) -> BatchExtractionResult`
+  - Calling synchronous `.extract(...)` / `.extract_batch(...)` with an async-only strategy or async-only observer raises `ConfigurationError` eagerly. Passing both `result_builder` and `calibrator` to `ExtractionEngine` (or both `confidence_normalizer` and `calibrator` to `ResultBuilder`) raises `ConfigurationError` eagerly; call-level `calibrator` overrides the engine's calibrator for that call only without mutating engine state. `.aextract(...)` / `.aextract_batch(...)` accept both native `AsyncExtractionStrategy` and synchronous `ExtractionStrategy` (offloaded via `asyncio.to_thread`), prefer native `aextract_raw` / `aon_event` on dual-protocol implementations, and propagate `asyncio.CancelledError` cleanly (cancelling in-flight batch tasks).
 - Functional helpers:
-  - `extract(document, schema, *, strategy, limits=None, document_id=None, observers=None) -> ExtractionResult`
-  - `extract_batch(documents, schema, *, strategy, limits=None, options=None, observers=None) -> BatchExtractionResult`
-  - `async aextract(document, schema, *, strategy, limits=None, document_id=None, observers=None) -> ExtractionResult`
-  - `async aextract_batch(documents, schema, *, strategy, limits=None, options=None, observers=None) -> BatchExtractionResult`
+  - `extract(document, schema, *, strategy, limits=None, document_id=None, observers=None, calibrator=None) -> ExtractionResult`
+  - `extract_batch(documents, schema, *, strategy, limits=None, options=None, observers=None, calibrator=None) -> BatchExtractionResult`
+  - `async aextract(document, schema, *, strategy, limits=None, document_id=None, observers=None, calibrator=None) -> ExtractionResult`
+  - `async aextract_batch(documents, schema, *, strategy, limits=None, options=None, observers=None, calibrator=None) -> BatchExtractionResult`
 - See [examples/async_extraction_example.py](../examples/async_extraction_example.py) for an offline runnable async single + bounded-concurrency batch example.
 - In-memory input descriptors: `DocumentInput` (`DocumentInputKind`: `path`, `bytes`, `text`, `stream`) constructed via `DocumentInput.from_path(path, *, filename=None, document_id=None, media_type=None)`, `DocumentInput.from_bytes(content, *, filename=None, document_id=None, media_type=None)`, `DocumentInput.from_text(text, *, filename=None, document_id=None, media_type=None)`, and `DocumentInput.from_stream(stream, *, filename=None, document_id=None, media_type=None)`. Supported `media_type` values are `text/plain`, `application/pdf`, `application/vnd.openxmlformats-officedocument.wordprocessingml.document`, `text/html`, `text/markdown`, and `message/rfc822` (`from_text` supports text-based formats `text/plain`, `text/html`, `text/markdown`, and `message/rfc822`). Filenames are sanitized to basename-only (null bytes fail eagerly); binary streams are read incrementally up to `max_file_bytes + 1` bytes without creating temporary files. See [examples/in_memory_extraction_example.py](../examples/in_memory_extraction_example.py) and [examples/multiformat_extraction_example.py](../examples/multiformat_extraction_example.py).
 - Batch models: `BatchDocumentInput(path, document_id=None)`, `BatchOptions(max_workers=1, fail_fast=False)` (`1 <= max_workers <= 32`), `BatchSummary` (`to_dict()`, `to_json()`), `BatchExtractionResult` (`to_jsonl()`, `to_dict()`, `to_json()`). See [examples/batch_extraction_example.py](../examples/batch_extraction_example.py).
@@ -105,6 +105,22 @@ All stable public symbols are exported from the top-level `structa_maestro` pack
 - `CompiledOutputSchema` & `compile_extraction_output_schema(schema)`: deterministic closed JSON Schema compiler used by strict structured-output mode.
 - `DeterministicTestStrategy(handler_or_output, name="deterministic-test")` and `AsyncDeterministicTestStrategy(async_handler_or_output, name="async-deterministic-test")`.
 
+## Empirical Confidence Calibration (Opt-In)
+
+By default (`calibrator=None`), `ConfidenceNormalizer` emits `calibrated=False` identically to prior releases. Callers can optionally fit, inspect, persist, and attach a zero-dependency empirical calibrator without altering Contract `v1.0`:
+
+- **Protocol & Artifact**:
+  - `ConfidenceCalibrator` (`@runtime_checkable Protocol`): `scale: str`, `method: str`, `calibrate(raw_score: float) -> float`.
+  - `CalibrationModel` (`artifact_version="1.0"`): immutable, JSON-serializable artifact (`to_dict()`, `from_dict()`, `to_json()`, `from_json()`, `to_file()`, `from_file()` enforcing a `5 MiB` cap and `extra="forbid"`, raising `ConfigurationError` on malformed/non-monotonic/out-of-bounds payloads).
+  - Parameter & metadata models: `CalibrationSample(raw_score, is_correct)`, `CalibrationMethod` (`isotonic`, `platt`, `histogram`), `BinningStrategy` (`uniform`, `quantile`), `CalibrationMetadata`, `IsotonicParameters`, `PlattParameters`, `HistogramParameters`, `CalibrationBin`, `CalibrationMetrics`.
+- **Offline Fitting & Metrics**:
+  - `fit_calibrator(samples, *, method="isotonic", num_bins=10, binning_strategy="uniform", min_samples=20, metric_bins=10, schema_id=None, strategy_name=None, description=None) -> CalibrationModel` — deterministic pure-stdlib PAVA isotonic regression, regularized monotonic clamped-logit Platt scaling, and uniform/quantile histogram binning; requires `min_samples >= 4` and both positive and negative outcomes.
+  - `compute_calibration_metrics(samples, *, num_bins=10) -> CalibrationMetrics` — deterministic `ece`, `mce`, `brier_score`, and per-bin reliability summaries (zero-denominator safe on empty inputs).
+- **Epistemic Honesty & Fault Isolation**:
+  - Sets `calibrated=True` with `method=f"{raw_method}+calibrated:{calibrator.method}"` strictly for valid finite scores on the calibrator's supported scale (`"0-1"`).
+  - Missing, non-numeric, non-finite, and out-of-range scores stay `calibrated=False` with standard warnings; non-matching scales stay uncalibrated with `confidence_calibration_scale_mismatch`; calibrator runtime errors or invalid outputs fall back to uncalibrated confidence with `confidence_calibration_failed` (`WARNING`, `EXTRACTION`).
+  - See [examples/confidence_calibration_example.py](../examples/confidence_calibration_example.py) and `python -m evals calibrate` for evaluation-driven fitting & K-fold cross-validation.
+
 ## Observability & Privacy-Safe Telemetry
 
 All telemetry models and observer hooks are strictly decoupled from Canonical Output Record Contract `v1.0` and carry zero raw document text, extracted field values, provenance excerpts, host directory paths, or credentials:
@@ -151,6 +167,8 @@ All telemetry models and observer hooks are strictly decoupled from Canonical Ou
 | `provider_retry_succeeded` | `warning` | Extraction succeeded after one or more bounded retries following transient failures. |
 | `input_budget_exceeded` | `error` | Prepared document length exceeded `max_input_chars` under `overflow_policy="reject"` (zero outbound requests). |
 | `input_truncated` | `warning` | Prepared document was truncated on a clean boundary under `overflow_policy="truncate"` (`status="partial"`). |
+| `confidence_calibration_scale_mismatch` | `warning` | Valid finite confidence used a scale other than the attached calibrator's scale; preserved uncalibrated (`calibrated=False`). |
+| `confidence_calibration_failed` | `warning` | Attached calibrator raised an error or returned an invalid value; fell back safely to uncalibrated score (`calibrated=False`). |
 | `attachments_skipped` | `warning` | (`PipelineStage.DOCUMENT_PROCESSING`) One or more binary/file attachments in an `.eml` message were skipped safely without inflating or executing them. |
 
 ## Cross-Field Validation Diagnostic Codes (`PipelineStage.VALIDATION`)
@@ -184,6 +202,7 @@ structa-maestro extract <document|-> --schema <schema.json>
   [--max-retries 2]
   [--max-input-chars 120000|none]
   [--overflow-policy reject|truncate]
+  [--calibrator <calibrator.json>]
   [--telemetry-json <telemetry.json>]
   [--pretty]
 
@@ -193,6 +212,7 @@ structa-maestro extract-batch <path_or_dir> [<path_or_dir> ...] --schema <schema
   [--fail-fast]
   [--output <results.jsonl>]
   [--summary-json <summary.json>]
+  [--calibrator <calibrator.json>]
   [--telemetry-json <telemetry.json>]
   [all common --model / --base-url / --api-key-env / limit / LLM reliability flags]
 ```

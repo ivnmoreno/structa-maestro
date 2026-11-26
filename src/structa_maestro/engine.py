@@ -20,6 +20,7 @@ from structa_maestro.batch import (
     run_batch_extraction,
 )
 from structa_maestro.builder.result_builder import ResultBuilder
+from structa_maestro.confidence.calibration import ConfidenceCalibrator, validate_calibrator
 from structa_maestro.config import DocumentLimits, get_logger, sanitize_message
 from structa_maestro.contracts.enums import IssueSeverity, PipelineStage
 from structa_maestro.contracts.models import DiagnosticIssue, ExtractionResult, SchemaMetadata
@@ -94,6 +95,7 @@ class ExtractionEngine:
         limits: DocumentLimits | None = None,
         result_builder: ResultBuilder | None = None,
         observers: Sequence[AnyExtractionObserver] | None = None,
+        calibrator: ConfidenceCalibrator | None = None,
     ) -> None:
         if not isinstance(strategy, (ExtractionStrategy, AsyncExtractionStrategy)):
             raise ConfigurationError(
@@ -102,9 +104,14 @@ class ExtractionEngine:
             )
         if limits is not None and not isinstance(limits, DocumentLimits):
             raise ConfigurationError("limits must be a DocumentLimits instance or None.")
+        if result_builder is not None and calibrator is not None:
+            raise ConfigurationError(
+                "Cannot pass both result_builder and calibrator to ExtractionEngine."
+            )
+        validated_calibrator = validate_calibrator(calibrator)
         self._strategy: AnyExtractionStrategy = strategy
         self._limits = limits or DocumentLimits()
-        self._builder = result_builder or ResultBuilder()
+        self._builder = result_builder or ResultBuilder(calibrator=validated_calibrator)
         self._observers: tuple[AnyExtractionObserver, ...] = validate_observers(
             observers,
             require_sync=False,
@@ -143,6 +150,7 @@ class ExtractionEngine:
         strategy_output: StrategyOutput,
         *,
         extraction_id: str | None = None,
+        calibrator: ConfidenceCalibrator | None = None,
     ) -> ExtractionResult:
         if load_result.document is None:
             return self._build_load_failure(
@@ -157,6 +165,7 @@ class ExtractionEngine:
                 strategy_output=strategy_output,
                 document_warnings=load_result.warnings,
                 extraction_id=extraction_id,
+                calibrator=calibrator,
             )
         except Exception as exc:
             safe_msg = sanitize_message(
@@ -421,6 +430,7 @@ class ExtractionEngine:
         batch_id: str | None = None,
         preloaded_error: DocumentLoadResult | None = None,
         item_timings: dict[str, float] | None = None,
+        calibrator: ConfidenceCalibrator | None = None,
     ) -> ExtractionResult:
         emit = bool(observers)
         extraction_id = str(uuid4()) if emit else None
@@ -597,6 +607,7 @@ class ExtractionEngine:
             parsed_schema,
             strategy_output,
             extraction_id=extraction_id,
+            calibrator=calibrator,
         )
         fin_ms = (time.perf_counter() - fin_started) * 1000.0
         op_ms = (time.perf_counter() - op_started) * 1000.0
@@ -628,6 +639,7 @@ class ExtractionEngine:
         batch_id: str | None = None,
         preloaded_error: DocumentLoadResult | None = None,
         item_timings: dict[str, float] | None = None,
+        calibrator: ConfidenceCalibrator | None = None,
     ) -> ExtractionResult:
         if preloaded_error is None and isinstance(document, DocumentInput):
             _validate_document_id_override(document_id)
@@ -824,6 +836,7 @@ class ExtractionEngine:
             parsed_schema,
             strategy_output,
             extraction_id=extraction_id,
+            calibrator=calibrator,
         )
         fin_ms = (time.perf_counter() - fin_started) * 1000.0
         op_ms = (time.perf_counter() - op_started) * 1000.0
@@ -852,10 +865,12 @@ class ExtractionEngine:
         *,
         document_id: str | None = None,
         observers: Sequence[ExtractionObserver] | None = None,
+        calibrator: ConfidenceCalibrator | None = None,
     ) -> ExtractionResult:
         """Extract validated canonical structured records synchronously."""
         sync_strategy = self._require_sync_strategy()
         effective_observers = self._compose_observers(observers, require_sync=True)
+        validated_calibrator = validate_calibrator(calibrator)
         parsed_schema = _coerce_schema(schema)
         return self._extract_single_sync(
             document,
@@ -863,6 +878,7 @@ class ExtractionEngine:
             sync_strategy,
             document_id=document_id,
             observers=effective_observers,
+            calibrator=validated_calibrator,
         )
 
     async def aextract(
@@ -872,15 +888,18 @@ class ExtractionEngine:
         *,
         document_id: str | None = None,
         observers: Sequence[AnyExtractionObserver] | None = None,
+        calibrator: ConfidenceCalibrator | None = None,
     ) -> ExtractionResult:
         """Asynchronously extract validated canonical structured records without blocking."""
         effective_observers = self._compose_observers(observers, require_sync=False)
+        validated_calibrator = validate_calibrator(calibrator)
         parsed_schema = _coerce_schema(schema)
         return await self._extract_single_async(
             document,
             parsed_schema,
             document_id=document_id,
             observers=effective_observers,
+            calibrator=validated_calibrator,
         )
 
     def extract_batch(
@@ -890,10 +909,12 @@ class ExtractionEngine:
         *,
         options: BatchOptions | None = None,
         observers: Sequence[ExtractionObserver] | None = None,
+        calibrator: ConfidenceCalibrator | None = None,
     ) -> BatchExtractionResult:
         """Statelessly extract a mixed collection of paths and in-memory documents in order."""
         sync_strategy = self._require_sync_strategy()
         effective_observers = self._compose_observers(observers, require_sync=True)
+        validated_calibrator = validate_calibrator(calibrator)
         parsed_schema = _coerce_schema(schema)
         resolved_options = options if options is not None else BatchOptions()
         if not isinstance(resolved_options, BatchOptions):
@@ -942,6 +963,7 @@ class ExtractionEngine:
                 batch_id=batch_id,
                 preloaded_error=item.preloaded_error,
                 item_timings=item_timings,
+                calibrator=validated_calibrator,
             )
 
         def _on_item_complete(
@@ -1004,9 +1026,11 @@ class ExtractionEngine:
         *,
         options: BatchOptions | None = None,
         observers: Sequence[AnyExtractionObserver] | None = None,
+        calibrator: ConfidenceCalibrator | None = None,
     ) -> BatchExtractionResult:
         """Asynchronously extract a mixed collection of documents with bounded concurrency."""
         effective_observers = self._compose_observers(observers, require_sync=False)
+        validated_calibrator = validate_calibrator(calibrator)
         parsed_schema = _coerce_schema(schema)
         resolved_options = options if options is not None else BatchOptions()
         if not isinstance(resolved_options, BatchOptions):
@@ -1060,6 +1084,7 @@ class ExtractionEngine:
                 batch_id=batch_id,
                 preloaded_error=item.preloaded_error,
                 item_timings=item_timings,
+                calibrator=validated_calibrator,
             )
 
         async def _aon_item_complete(
@@ -1124,9 +1149,10 @@ def extract(
     limits: DocumentLimits | None = None,
     document_id: str | None = None,
     observers: Sequence[ExtractionObserver] | None = None,
+    calibrator: ConfidenceCalibrator | None = None,
 ) -> ExtractionResult:
     """Convenience synchronous entry point delegating directly to ExtractionEngine."""
-    engine = ExtractionEngine(strategy=strategy, limits=limits)
+    engine = ExtractionEngine(strategy=strategy, limits=limits, calibrator=calibrator)
     return engine.extract(document, schema, document_id=document_id, observers=observers)
 
 
@@ -1138,9 +1164,10 @@ async def aextract(
     limits: DocumentLimits | None = None,
     document_id: str | None = None,
     observers: Sequence[AnyExtractionObserver] | None = None,
+    calibrator: ConfidenceCalibrator | None = None,
 ) -> ExtractionResult:
     """Convenience asyncio entry point delegating directly to ExtractionEngine.aextract."""
-    engine = ExtractionEngine(strategy=strategy, limits=limits)
+    engine = ExtractionEngine(strategy=strategy, limits=limits, calibrator=calibrator)
     return await engine.aextract(document, schema, document_id=document_id, observers=observers)
 
 
@@ -1152,9 +1179,10 @@ def extract_batch(
     limits: DocumentLimits | None = None,
     options: BatchOptions | None = None,
     observers: Sequence[ExtractionObserver] | None = None,
+    calibrator: ConfidenceCalibrator | None = None,
 ) -> BatchExtractionResult:
     """Convenience synchronous batch entry point delegating directly to ExtractionEngine."""
-    engine = ExtractionEngine(strategy=strategy, limits=limits)
+    engine = ExtractionEngine(strategy=strategy, limits=limits, calibrator=calibrator)
     return engine.extract_batch(documents, schema, options=options, observers=observers)
 
 
@@ -1166,7 +1194,8 @@ async def aextract_batch(
     limits: DocumentLimits | None = None,
     options: BatchOptions | None = None,
     observers: Sequence[AnyExtractionObserver] | None = None,
+    calibrator: ConfidenceCalibrator | None = None,
 ) -> BatchExtractionResult:
     """Convenience asyncio batch entry point delegating directly to ExtractionEngine."""
-    engine = ExtractionEngine(strategy=strategy, limits=limits)
+    engine = ExtractionEngine(strategy=strategy, limits=limits, calibrator=calibrator)
     return await engine.aextract_batch(documents, schema, options=options, observers=observers)
