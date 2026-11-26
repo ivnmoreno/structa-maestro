@@ -1,4 +1,4 @@
-"""Extraction strategy protocols, OpenAI-compatible LLM strategies, and test doubles."""
+"""Extraction strategy protocols, OpenAI/Anthropic/Gemini LLM strategies, and test doubles."""
 
 from __future__ import annotations
 
@@ -14,6 +14,10 @@ from structa_maestro.strategies.llm_anthropic import (
     AnthropicLLMStrategy,
     AsyncAnthropicLLMStrategy,
 )
+from structa_maestro.strategies.llm_gemini import (
+    AsyncGeminiLLMStrategy,
+    GeminiLLMStrategy,
+)
 from structa_maestro.strategies.llm_openai_compat import (
     AsyncOpenAICompatibleLLMStrategy,
     OpenAICompatibleLLMStrategy,
@@ -28,9 +32,11 @@ __all__ = [
     "AsyncAnthropicLLMStrategy",
     "AsyncDeterministicTestStrategy",
     "AsyncExtractionStrategy",
+    "AsyncGeminiLLMStrategy",
     "AsyncOpenAICompatibleLLMStrategy",
     "DeterministicTestStrategy",
     "ExtractionStrategy",
+    "GeminiLLMStrategy",
     "OpenAICompatibleLLMStrategy",
     "ProposedEvidence",
     "ProposedField",

@@ -99,6 +99,22 @@ All stable public symbols are exported from the top-level `structa_maestro` pack
   )
   ```
   See [examples/anthropic_strategy_example.py](../examples/anthropic_strategy_example.py).
+- `GeminiLLMStrategy` (sync, `httpx.Client`) and `AsyncGeminiLLMStrategy` (async, `httpx.AsyncClient` + `asyncio.sleep`, reference-counted `async with`, idempotent `await strategy.aclose()`, caller-owned `http_client` preservation): native Google Gemini API (`POST {base_url}/v1beta/models/{model}:generateContent`) strategies authenticating strictly via the `x-goog-api-key` header (never query strings), using `generationConfig.responseMimeType="application/json"` + compiled closed `responseJsonSchema` with single-step JSON-object fallback, immediate non-retryable `provider_refusal` on `promptFeedback.blockReason` and safety/recitation/prohibited `finishReason`, Gemini 2.5 `thought: true` part filtering, bounded retries, `InputBudgetPolicy`, delimiter neutralization, and cumulative `StrategyTelemetry` via `parse_gemini_token_usage` (`usageMetadata.promptTokenCount` → `prompt_tokens`, `candidatesTokenCount` → `completion_tokens`, `totalTokenCount` → `total_tokens`):
+  ```python
+  AsyncGeminiLLMStrategy(
+      model="gemini-2.5-flash",
+      api_key=...,
+      base_url="https://generativelanguage.googleapis.com",
+      timeout_seconds=60.0,
+      max_output_tokens=4096,
+      temperature=0.0,
+      http_client=None,  # optional caller-owned httpx.AsyncClient (never closed by strategy)
+      structured_output_mode=StructuredOutputMode.STRICT_WITH_FALLBACK,
+      retry_policy=RetryPolicy(),
+      input_budget=InputBudgetPolicy(),
+  )
+  ```
+  See [examples/gemini_strategy_example.py](../examples/gemini_strategy_example.py).
 - `StructuredOutputMode`: `STRICT_WITH_FALLBACK` (default), `STRICT`, `JSON_OBJECT`.
 - `RetryPolicy(max_retries=2, initial_backoff_seconds=0.5, max_backoff_seconds=8.0, jitter=True, retry_on_malformed_output=True, max_total_seconds=None)`.
 - `InputBudgetPolicy(max_input_chars=120_000, overflow_policy=InputBudgetOverflowPolicy.REJECT)` (`max_input_chars=None` disables budgeting; `InputBudgetOverflowPolicy` is `REJECT` or `TRUNCATE`).
@@ -149,7 +165,7 @@ All telemetry models and observer hooks are strictly decoupled from Canonical Ou
   - `ExtractionEventKind`: `extraction_started`, `document_loaded`, `strategy_completed`, `extraction_completed`, `batch_started`, `batch_item_completed`, `batch_completed`.
   - `ExtractionEvent` (`to_dict()`, `to_json()`): unified correlated event envelope (`extraction_id`, optional `batch_id`, `document_id`, basename-only `filename`, `media_type`, schema/strategy IDs, `elapsed_ms`, statuses, counts, sanitized diagnostic `code` tuples, `stage_timing`, `stage_timings`, `strategy_telemetry`, `batch_progress`).
   - `StageTiming(stage, elapsed_ms, succeeded)` & `StageTimingSummary(stage, count, total_ms, mean_ms, p50_ms, max_ms)` (`p50_ms` uses exact `statistics.median`).
-  - `TokenUsage(prompt_tokens, completion_tokens, total_tokens)` & `StrategyTelemetry(attempts, retry_count, structured_output_mode_used, fallback_used, truncated, token_usage)` (populated cumulatively across attempts by `OpenAICompatibleLLMStrategy`, `AsyncOpenAICompatibleLLMStrategy`, `AnthropicLLMStrategy`, and `AsyncAnthropicLLMStrategy`, leaving unavailable/omitted counts as `None`).
+  - `TokenUsage(prompt_tokens, completion_tokens, total_tokens)` & `StrategyTelemetry(attempts, retry_count, structured_output_mode_used, fallback_used, truncated, token_usage)` (populated cumulatively across attempts by `OpenAICompatibleLLMStrategy`, `AsyncOpenAICompatibleLLMStrategy`, `AnthropicLLMStrategy`, `AsyncAnthropicLLMStrategy`, `GeminiLLMStrategy`, and `AsyncGeminiLLMStrategy`, leaving unavailable/omitted counts as `None`).
   - `BatchProgress` & `TelemetrySummary` (`to_dict()`, `to_json()`).
 - See [examples/observability_telemetry_example.py](../examples/observability_telemetry_example.py) for an offline runnable walkthrough.
 
@@ -174,8 +190,8 @@ All telemetry models and observer hooks are strictly decoupled from Canonical Ou
 
 | Code | Severity | Meaning |
 | --- | --- | --- |
-| `structured_output_fallback` | `warning` | Strategy fell back once from strict `json_schema` (OpenAI) or forced `tool_use` (Anthropic) to `json_object` / JSON-text mode (open schema or unsupported endpoint). |
-| `strict_schema_incompatible` | `error` | `StructuredOutputMode.STRICT` was requested for a schema with `allow_additional_fields=True`. |
+| `structured_output_fallback` | `warning` | Strategy fell back once from strict `json_schema` (OpenAI), forced `tool_use` (Anthropic), or `responseJsonSchema` (Gemini) to `json_object` / JSON-text mode (open schema or unsupported endpoint). |
+| `strict_schema_incompatible` | `error` | `StructuredOutputMode.STRICT` was requested for a schema with `allow_additional_fields=True` or an endpoint rejected the strict schema. |
 | `model_output_sanitized` | `warning` | Valid top-level JSON envelope was recovered after stripping outer Markdown fences or surrounding text. |
 | `provider_retry_succeeded` | `warning` | Extraction succeeded after one or more bounded retries following transient failures. |
 | `input_budget_exceeded` | `error` | Prepared document length exceeded `max_input_chars` under `overflow_policy="reject"` (zero outbound requests). |
@@ -202,11 +218,11 @@ structa-maestro extract <document|-> --schema <schema.json>
   [--filename <name>]        # stdin ('-') only; sanitized to basename
   [--output <result.json>]
   [--document-id <id>]
-  [--provider openai|anthropic]
+  [--provider openai|anthropic|gemini]
   [--model <model>]
   [--base-url <url>]
-  [--api-key-env <ENV_VAR>]  # default: STRUCTA_MAESTRO_API_KEY (openai) / ANTHROPIC_API_KEY (anthropic)
-  [--max-tokens 4096]        # max output tokens for Anthropic Messages API
+  [--api-key-env <ENV_VAR>]  # default: STRUCTA_MAESTRO_API_KEY (openai) / ANTHROPIC_API_KEY (anthropic) / GEMINI_API_KEY (gemini)
+  [--max-tokens 4096]        # max output tokens for Anthropic Messages and Gemini generateContent APIs
   [--max-file-mb 25]
   [--max-bytes <int>]        # optional byte-exact override for --max-file-mb
   [--max-decompressed-mb 50]

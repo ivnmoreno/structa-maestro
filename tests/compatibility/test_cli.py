@@ -839,3 +839,96 @@ def test_cli_provider_anthropic_selection_and_defaults(
     assert strat.messages_endpoint == "https://api.anthropic.com/v1/messages"
     assert strat.max_tokens == 2048
     assert strat.retry_policy.max_retries == 3
+
+
+def test_cli_provider_gemini_selection_defaults_and_batch(
+    fixtures_dir: Path,
+    monkeypatch: Any,
+) -> None:
+    from structa_maestro import GeminiLLMStrategy
+
+    schema_path = fixtures_dir / "schemas" / "invoice_schema.json"
+    doc_path = fixtures_dir / "documents" / "txt" / "invoice_001.txt"
+
+    # Missing GEMINI_API_KEY fails with clear configuration error (exit 1) and empty stdout
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    out_missing = io.StringIO()
+    err_missing = io.StringIO()
+    assert (
+        run_cli(
+            ["extract", str(doc_path), "--schema", str(schema_path), "--provider", "gemini"],
+            stdout=out_missing,
+            stderr=err_missing,
+        )
+        == 1
+    )
+    assert out_missing.getvalue() == ""
+    assert "GEMINI_API_KEY" in err_missing.getvalue()
+
+    # With GEMINI_API_KEY set, constructs GeminiLLMStrategy with expected defaults & --max-tokens
+    captured: dict[str, Any] = {}
+    monkeypatch.setenv("GEMINI_API_KEY", "AIzaSyCliTestSecret1234567890")
+
+    def _capture_extract(_doc: Any, _schema: Any, **kwargs: Any) -> Any:
+        captured["strategy"] = kwargs["strategy"]
+        raise RuntimeError("stop-after-capture")
+
+    monkeypatch.setattr("structa_maestro.cli.extract", _capture_extract)
+    run_cli(
+        [
+            "extract",
+            str(doc_path),
+            "--schema",
+            str(schema_path),
+            "--provider",
+            "gemini",
+            "--max-tokens",
+            "2048",
+            "--max-retries",
+            "3",
+        ],
+        stdout=io.StringIO(),
+        stderr=io.StringIO(),
+    )
+    strat = captured["strategy"]
+    assert isinstance(strat, GeminiLLMStrategy)
+    assert strat.name == "gemini-llm:gemini-2.5-flash"
+    assert (
+        strat.generate_content_endpoint
+        == "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+    )
+    assert strat.max_output_tokens == 2048
+    assert strat.retry_policy.max_retries == 3
+
+    # extract-batch also supports --provider gemini with custom --model and --base-url
+    batch_captured: dict[str, Any] = {}
+
+    def _capture_batch(_docs: Any, _schema: Any, **kwargs: Any) -> Any:
+        batch_captured["strategy"] = kwargs["strategy"]
+        raise RuntimeError("stop-after-capture")
+
+    monkeypatch.setattr("structa_maestro.cli.extract_batch", _capture_batch)
+    run_cli(
+        [
+            "extract-batch",
+            str(doc_path),
+            "--schema",
+            str(schema_path),
+            "--provider",
+            "gemini",
+            "--model",
+            "gemini-2.5-pro",
+            "--base-url",
+            "https://gemini-proxy.internal/v1beta",
+        ],
+        stdout=io.StringIO(),
+        stderr=io.StringIO(),
+    )
+    b_strat = batch_captured["strategy"]
+    assert isinstance(b_strat, GeminiLLMStrategy)
+    assert b_strat.name == "gemini-llm:gemini-2.5-pro"
+    assert (
+        b_strat.generate_content_endpoint
+        == "https://gemini-proxy.internal/v1beta/models/gemini-2.5-pro:generateContent"
+    )
+    assert b_strat.max_output_tokens == 4096

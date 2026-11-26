@@ -19,12 +19,13 @@ Additional built-in stdlib parser safety controls (always enabled with zero exte
 
 ## External Model Provider Configuration
 
-When using `OpenAICompatibleLLMStrategy` / `AsyncOpenAICompatibleLLMStrategy` or `AnthropicLLMStrategy` / `AsyncAnthropicLLMStrategy`:
+When using `OpenAICompatibleLLMStrategy` / `AsyncOpenAICompatibleLLMStrategy`, `AnthropicLLMStrategy` / `AsyncAnthropicLLMStrategy`, or `GeminiLLMStrategy` / `AsyncGeminiLLMStrategy`:
 
 - **Endpoints**:
   - OpenAI-compatible: configure `base_url` (default `https://api.openai.com/v1`) for OpenAI, Azure OpenAI proxies, vLLM, LiteLLM, or Ollama.
   - Anthropic Messages API: configure `base_url` (default `https://api.anthropic.com`; `/v1/messages` is resolved automatically without duplicating `/v1`), `max_tokens` (default `4096`), `temperature` (`0.0`–`1.0`), and `anthropic_version` (default `"2023-06-01"`).
-- **Credentials**: Supply credentials through environment variables (`STRUCTA_MAESTRO_API_KEY` for OpenAI or `ANTHROPIC_API_KEY` for Anthropic in CLI `--provider anthropic`) or `SecretValue`. The CLI intentionally does not accept raw API keys as flags to prevent leakage into shell history or process listings, and `sanitize_message` scrubs `Bearer`, `sk-...` (including `sk-ant-...`), `api_key`, `authorization`, and `x-api-key` patterns.
+  - Google Gemini API (`generateContent`): configure `base_url` (default `https://generativelanguage.googleapis.com`; `/v1beta/models/{model}:generateContent` is resolved automatically without duplicating `/v1beta` or `models/`, and query/fragment URLs are rejected eagerly), `max_output_tokens` (default `4096`), and `temperature` (`0.0`–`2.0`).
+- **Credentials**: Supply credentials through environment variables (`STRUCTA_MAESTRO_API_KEY` for OpenAI, `ANTHROPIC_API_KEY` for Anthropic in CLI `--provider anthropic`, or `GEMINI_API_KEY` for Google Gemini in CLI `--provider gemini`) or `SecretValue`. Gemini strategies authenticate strictly via the `x-goog-api-key` HTTP header (never appending API keys to URL query strings). The CLI intentionally does not accept raw API keys as flags to prevent leakage into shell history or process listings, and `sanitize_message` scrubs `Bearer`, `sk-...` (including `sk-ant-...`), `api_key`, `authorization`, `x-api-key`, `x-goog-api-key`, Google `AIza...` tokens, and `?key=` / `&key=` query parameters.
 - **Data Transmission Notice**: Prepared text extracted from the submitted document is transmitted to the configured endpoint. Review your provider's retention and compliance terms before sending personal, financial, or confidential records.
 - **Structured Output Modes (`StructuredOutputMode`)**:
   - `strict_with_fallback` *(default)*: Compiles `ExtractionSchema` into a strict closed `json_schema` response format (`additionalProperties: false`) and automatically falls back once to `json_object` with warning `structured_output_fallback` if the schema sets `allow_additional_fields=True` or the endpoint rejects strict schema mode.
@@ -38,7 +39,7 @@ When using `OpenAICompatibleLLMStrategy` / `AsyncOpenAICompatibleLLMStrategy` or
 
 | Control | Default | CLI Flag | Behavior |
 | --- | --- | --- | --- |
-| `structured_output_mode` | `strict_with_fallback` | `--structured-output-mode` | Sends strict `json_schema` (OpenAI) or forced `tool_use` (Anthropic); falls back once to JSON-text mode if unsupported |
+| `structured_output_mode` | `strict_with_fallback` | `--structured-output-mode` | Sends strict `json_schema` (OpenAI), forced `tool_use` (Anthropic), or `responseJsonSchema` (Gemini); falls back once to JSON-object / JSON-text mode if unsupported |
 | `RetryPolicy.max_retries` | `2` | `--max-retries` | Bounded retries on `408`/`429`/`5xx`/`529`, timeouts, transport errors, and malformed JSON |
 | `RetryPolicy.initial_backoff_seconds` | `0.5` | *(Python API)* | Base exponential backoff delay (seconds) |
 | `RetryPolicy.max_backoff_seconds` | `8.0` | *(Python API)* | Upper backoff cap (also bounds parsed `Retry-After` delays) |
@@ -81,12 +82,12 @@ strategy = OpenAICompatibleLLMStrategy(
 
 ### Async HTTP Client Lifecycle & FastAPI Lifespan Guidance
 
-When using `AsyncOpenAICompatibleLLMStrategy` or `AsyncAnthropicLLMStrategy` in async web services (such as FastAPI or Starlette):
+When using `AsyncOpenAICompatibleLLMStrategy`, `AsyncAnthropicLLMStrategy`, or `AsyncGeminiLLMStrategy` in async web services (such as FastAPI or Starlette):
 
-- **Shared Lifespan Client (Recommended for Services)**: Create one `httpx.AsyncClient(timeout=60.0)` during application startup/lifespan, pass it via `http_client=client`, and close it on application shutdown. Neither async strategy will ever close a caller-injected client.
-- **Scoped Pooled Context (Recommended for Scripts & Batch Jobs)**: Enter `async with AsyncOpenAICompatibleLLMStrategy(...) as strategy:` (or `async with AsyncAnthropicLLMStrategy(...) as strategy:`) to pool a single strategy-owned `httpx.AsyncClient` across concurrent `aextract_batch` calls (nested `async with` is reference-counted and `await strategy.aclose()` is idempotent).
+- **Shared Lifespan Client (Recommended for Services)**: Create one `httpx.AsyncClient(timeout=60.0)` during application startup/lifespan, pass it via `http_client=client`, and close it on application shutdown. None of the async strategies will ever close a caller-injected client.
+- **Scoped Pooled Context (Recommended for Scripts & Batch Jobs)**: Enter `async with AsyncOpenAICompatibleLLMStrategy(...) as strategy:` (or `AsyncAnthropicLLMStrategy` / `AsyncGeminiLLMStrategy`) to pool a single strategy-owned `httpx.AsyncClient` across concurrent `aextract_batch` calls (nested `async with` is reference-counted and `await strategy.aclose()` is idempotent).
 - **Standalone One-Off Calls**: Calling `await aextract(...)` outside `async with` without an injected `http_client` safely creates and closes a per-call `httpx.AsyncClient` so sockets never leak.
-- **Task Cancellation**: `asyncio.CancelledError` is never swallowed by `aextract`, `aextract_batch`, `AsyncOpenAICompatibleLLMStrategy`, or `AsyncAnthropicLLMStrategy`; cancelling an `aextract_batch` task cancels and awaits all active child tasks cleanly before propagating `CancelledError`.
+- **Task Cancellation**: `asyncio.CancelledError` is never swallowed by `aextract`, `aextract_batch`, `AsyncOpenAICompatibleLLMStrategy`, `AsyncAnthropicLLMStrategy`, or `AsyncGeminiLLMStrategy`; cancelling an `aextract_batch` task cancels and awaits all active child tasks cleanly before propagating `CancelledError`.
 
 ## Logging & Data Minimization
 
@@ -143,6 +144,6 @@ class PrometheusTelemetryAdapter:
 ```
 
 > [!TIP]
-> Recording `prompt_tokens` and `completion_tokens` alongside optional `total_tokens` ensures accurate token accounting across both OpenAI-compatible endpoints and native Anthropic `/v1/messages` responses (where Anthropic omits `total_tokens`, so `structa-maestro` leaves it as `None` rather than fabricating a sum).
+> Recording `prompt_tokens` and `completion_tokens` alongside optional `total_tokens` ensures accurate token accounting across OpenAI-compatible endpoints, native Anthropic `/v1/messages` responses (where Anthropic omits `total_tokens`, so `structa-maestro` leaves it as `None` rather than fabricating a sum), and native Google Gemini `generateContent` responses (`usageMetadata`).
 
 For async I/O-bound telemetry sinks (e.g., flushing spans or webhooks over HTTP), implement `AsyncExtractionObserver` (`async def aon_event(self, event: ExtractionEvent) -> None`) so the event loop is never blocked. For CLI jobs, pass `--telemetry-json telemetry.json` to `structa-maestro extract` or `extract-batch` to export `TelemetrySummary` JSON without altering Contract `v1.0` output on `stdout`.

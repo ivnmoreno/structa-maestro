@@ -12,7 +12,7 @@ flowchart TD
     subgraph Pipeline["Stateless In-Process Extraction Pipeline (Operational failures isolated into canonical failed / partial results)"]
         S1["1. Schema Interpretation (structa_maestro.schema)\nDeclarative dict / JSON Schema subset / from_pydantic\nLossless to_dict / to_json export"]
         S2["2. Document Input & Parsing (structa_maestro.documents)\nBasename sanitization, bounded streams, DocumentLimits (25MB / 50MB / 200 pages)\nMagic-byte & container sniffing + hardened TXT, PDF, DOCX, HTML, MD, EML parsers"]
-        S3["3. Extraction Strategy (structa_maestro.strategies)\nOpenAICompatible / Anthropic / Deterministic (Sync & Async)\nStrict json_schema or forced tool_use + fallback, retries, budget, delimiter neutralization"]
+        S3["3. Extraction Strategy (structa_maestro.strategies)\nOpenAICompatible / Anthropic / Gemini / Deterministic (Sync & Async)\nStrict json_schema, forced tool_use, or responseJsonSchema + fallback, retries, budget, delimiter neutralization"]
         S4["4. Quality Verification & Assembly (provenance, confidence, validation, builder)\nProvenanceAssociator + ConfidenceNormalizer + DeterministicValidator + ResultBuilder"]
         S1 --> S2 --> S3 -->|"StrategyOutput (Firewall)"| S4
     end
@@ -30,7 +30,7 @@ flowchart TD
 ```
 
 > [!IMPORTANT]
-> **Strategy-to-Contract Firewall**: Extraction strategies return internal `StrategyOutput` DTOs (with optional `StrategyTelemetry`) and **never** construct `ExtractionResult` directly. Provider-specific wire fields (`choices`, `tool_use`, `usage`, `stop_reason`, `id`) cannot leak into public Contract `v1.0` outputs; normalized token and attempt counts flow exclusively to opt-in telemetry observers.
+> **Strategy-to-Contract Firewall**: Extraction strategies return internal `StrategyOutput` DTOs (with optional `StrategyTelemetry`) and **never** construct `ExtractionResult` directly. Provider-specific wire fields (`choices`, `tool_use`, `candidates`, `finishReason`, `usageMetadata`, `safetyRatings`, `promptFeedback`, `usage`, `stop_reason`, `id`) cannot leak into public Contract `v1.0` outputs; normalized token and attempt counts flow exclusively to opt-in telemetry observers.
 
 ## Component Boundaries
 
@@ -38,7 +38,7 @@ flowchart TD
 | --- | --- | --- | --- |
 | **1. Schema Interpretation** | `structa_maestro.schema` | Compile dict, JSON Schema subset, or Pydantic v2 `BaseModel` into immutable `ExtractionSchema` with intra-record `ValidationRule`s | Eager `SchemaDefinitionError` before work begins |
 | **2. Document Input & Parsing** | `structa_maestro.documents` | Safe signature sniffing, bounded stream reading, zero-temp-file parsing (`TXT`, `PDF`, `DOCX`, `HTML`, `Markdown`, `EML`) into `PreparedDocument` + `DocumentSegment` map | Canonical `ExtractionResult(status="failed")` |
-| **3. Extraction Strategies** | `structa_maestro.strategies` | Sync (`ExtractionStrategy`) & Async (`AsyncExtractionStrategy`) protocols; OpenAI-compatible, native Anthropic `/v1/messages`, and offline deterministic backends | Isolated into `StrategyOutput(failed/partial)` |
+| **3. Extraction Strategies** | `structa_maestro.strategies` | Sync (`ExtractionStrategy`) & Async (`AsyncExtractionStrategy`) protocols; OpenAI-compatible, native Anthropic `/v1/messages`, native Google Gemini `generateContent`, and offline deterministic backends | Isolated into `StrategyOutput(failed/partial)` |
 | **4. Quality & Assembly** | `provenance`, `confidence`, `validation`, `builder` | Quote verification & location mapping, honest confidence normalization & opt-in empirical calibration (`CalibrationModel`), non-coercing deterministic validation, and honest status assembly | Isolated warnings/errors (including calibrator fault fallback); never promotes `partial`/`failed` to `completed` |
 | **5. Strict Typed Binding** | `structa_maestro.binding` | Optional post-extraction projection (`bind_record` / `bind_records`) using `strict=True` Pydantic v2 validation | Privacy-safe `RecordBindingError` (never leaks raw values) |
 | **6. Stateless Human Review** | `structa_maestro.review` | Optional post-extraction multi-dimension triage (`plan_review`) & immutable correction application (`apply_review`) with mandatory `DeterministicValidator` re-validation and privacy-safe `ReviewAudit` | Eager `ConfigurationError`; never fabricates provenance or coerces invalid edits |
