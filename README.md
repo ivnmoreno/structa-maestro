@@ -26,7 +26,7 @@ Unstructured business documents (invoices, contracts, employment records, applic
 | Dimension | Question Answered | Epistemic Guarantee |
 | --- | --- | --- |
 | **Extracted value** | What value was identified? | Strictly distinguishes `missing`, explicit `null`, and `""` (zero silent coercion) |
-| **Confidence** | How reliable does the strategy assess this value? | Bounded on declared scale (`0-1`), explicitly marked `calibrated: false` |
+| **Confidence** | How reliable does the strategy assess this value? | Bounded on declared scale (`0-1`), `calibrated: false` by default; opt-in empirical `CalibrationModel` sets `calibrated: true` only when warranted |
 | **Provenance** | What source excerpt & location support it? | Verified verbatim against `PreparedDocument`; unlocated quotes marked `unverified` |
 | **Validation** | Does the record satisfy schema & cross-field rules? | Deterministic non-coercing validator (`valid` / `invalid` / `not_validated`) |
 | **Processing status** | Did the extraction pipeline complete? | `completed` / `partial` / `failed`, strictly independent of schema validity |
@@ -244,13 +244,13 @@ structa-maestro extract-batch ./invoices/ --schema invoice_schema.json \
 ```
 
 - **Exit codes**: `0` (all `completed` + `valid`), `2` (any `partial`/`failed`/`invalid` canonical result or early `--fail-fast` stop), `1` (CLI usage, empty discovery, schema, or configuration error).
-- Supports reliability flags (`--provider`, `--max-tokens`, `--structured-output-mode`, `--max-retries`, `--max-input-chars`, `--overflow-policy`) and `--telemetry-json <path>` while keeping `stdout` strictly Contract `v1.0`.
+- Supports reliability flags (`--provider`, `--max-tokens`, `--structured-output-mode`, `--max-retries`, `--max-input-chars`, `--overflow-policy`), `--calibrator <artifact.json>`, and `--telemetry-json <path>` while keeping `stdout` strictly Contract `v1.0`.
 
 ---
 
 ## Runnable Offline Examples
 
-All 12 scripts under [examples/](examples/) execute completely offline (zero API keys required) and are verified continuously in CI:
+All 13 scripts under [examples/](examples/) execute completely offline (zero API keys required) and are verified continuously in CI:
 
 | Example Script | Capability Demonstrated |
 | --- | --- |
@@ -266,6 +266,7 @@ All 12 scripts under [examples/](examples/) execute completely offline (zero API
 | [async_extraction_example.py](examples/async_extraction_example.py) | Native asyncio `aextract`, `aextract_batch`, pooled `async with`, and concurrency bounds |
 | [observability_telemetry_example.py](examples/observability_telemetry_example.py) | `InMemoryTelemetryObserver`, `StructuredLoggingObserver`, stage timings, and token rollups |
 | [multiformat_extraction_example.py](examples/multiformat_extraction_example.py) | Consistent extraction & provenance across HTML, Markdown, and RFC 5322 EML documents |
+| [confidence_calibration_example.py](examples/confidence_calibration_example.py) | Zero-dependency empirical calibration (`fit_calibrator`), ECE/Brier reduction, artifact persistence, and `calibrated: false` vs. `true` |
 
 ---
 
@@ -287,7 +288,7 @@ Every extraction returns an immutable `ExtractionResult` supporting lossless rou
 ## Current Limitations
 
 > [!WARNING]
-> - **Uncalibrated confidence**: Confidence scores currently report `"calibrated": false` and MUST NOT be interpreted as statistical probabilities.
+> - **Confidence calibration requires domain-representative data**: By default (`calibrator=None`), confidence scores report `"calibrated": false` and MUST NOT be interpreted as statistical probabilities. Even when an offline empirical `CalibrationModel` sets `"calibrated": true`, calibration reflects empirical accuracy on its fitting distribution only and never implies schema validity or factual truth.
 > - **External model data transmission**: `OpenAICompatibleLLMStrategy`, `AsyncOpenAICompatibleLLMStrategy`, `AnthropicLLMStrategy`, and `AsyncAnthropicLLMStrategy` transmit prepared document text to the configured endpoint; review provider data-handling policies before processing confidential documents.
 
 - **Intra-record validation scope**: Declarative cross-field and conditional validation rules operate within each extracted record (including nested objects and line-item arrays); cross-document validation remains out of scope.

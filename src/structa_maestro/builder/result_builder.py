@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from structa_maestro.confidence.calibration import ConfidenceCalibrator, validate_calibrator
 from structa_maestro.confidence.normalizer import ConfidenceNormalizer
 from structa_maestro.contracts.enums import (
     FieldPresence,
@@ -22,6 +23,7 @@ from structa_maestro.contracts.models import (
     ValidationOutcome,
 )
 from structa_maestro.documents.models import PreparedDocument
+from structa_maestro.exceptions import ConfigurationError
 from structa_maestro.provenance.associator import ProvenanceAssociator
 from structa_maestro.schema.models import ExtractionSchema
 from structa_maestro.strategies.base import ProposedRecord, StrategyOutput
@@ -37,10 +39,18 @@ class ResultBuilder:
         validator: DeterministicValidator | None = None,
         provenance_associator: ProvenanceAssociator | None = None,
         confidence_normalizer: ConfidenceNormalizer | None = None,
+        calibrator: ConfidenceCalibrator | None = None,
     ) -> None:
+        if confidence_normalizer is not None and calibrator is not None:
+            raise ConfigurationError(
+                "Cannot pass both confidence_normalizer and calibrator to ResultBuilder."
+            )
+        validated_calibrator = validate_calibrator(calibrator)
         self._validator = validator or DeterministicValidator()
         self._provenance = provenance_associator or ProvenanceAssociator()
-        self._confidence = confidence_normalizer or ConfidenceNormalizer()
+        self._confidence = confidence_normalizer or ConfidenceNormalizer(
+            calibrator=validated_calibrator
+        )
 
     def build_failed(
         self,
@@ -77,8 +87,10 @@ class ResultBuilder:
         strategy_output: StrategyOutput,
         document_warnings: list[DiagnosticIssue] | None = None,
         extraction_id: str | None = None,
+        calibrator: ConfidenceCalibrator | None = None,
     ) -> ExtractionResult:
         """Assemble full canonical ExtractionResult from prepared document and strategy output."""
+        call_calibrator = validate_calibrator(calibrator)
         result_errors = list(strategy_output.errors)
         result_warnings = list(document_warnings or ()) + list(strategy_output.warnings)
 
@@ -110,6 +122,7 @@ class ResultBuilder:
                 schema=schema,
                 proposed_record=proposed_record,
                 default_confidence_method=strategy_output.default_confidence_method,
+                calibrator=call_calibrator,
             )
             if built.status != ProcessingStatus.COMPLETED:
                 any_record_partial_or_failed = True
@@ -165,6 +178,7 @@ class ResultBuilder:
         schema: ExtractionSchema,
         proposed_record: ProposedRecord,
         default_confidence_method: str,
+        calibrator: ConfidenceCalibrator | None = None,
     ) -> ExtractedRecord:
         record_errors = list(proposed_record.errors)
         record_warnings = list(proposed_record.warnings)
@@ -237,6 +251,7 @@ class ResultBuilder:
                 record_id=record_id,
                 field_path=fname,
                 default_method=default_confidence_method,
+                calibrator=calibrator,
             )
             field_warnings.extend(conf_res.warnings)
 

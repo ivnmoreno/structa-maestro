@@ -10,7 +10,27 @@ from structa_maestro.batch import (
 )
 from structa_maestro.binding import bind_record, bind_records
 from structa_maestro.builder.result_builder import ResultBuilder
-from structa_maestro.confidence.normalizer import ConfidenceNormalizer
+from structa_maestro.confidence import (
+    CALIBRATION_ARTIFACT_VERSION,
+    DEFAULT_CALIBRATION_MIN_SAMPLES,
+    MAX_CALIBRATION_ARTIFACT_BYTES,
+    MIN_CALIBRATION_SAMPLES_FLOOR,
+    BinningStrategy,
+    CalibrationBin,
+    CalibrationMetadata,
+    CalibrationMethod,
+    CalibrationMetrics,
+    CalibrationModel,
+    CalibrationSample,
+    ConfidenceCalibrator,
+    ConfidenceNormalizationResult,
+    ConfidenceNormalizer,
+    HistogramParameters,
+    IsotonicParameters,
+    PlattParameters,
+    compute_calibration_metrics,
+    fit_calibrator,
+)
 from structa_maestro.config import DocumentLimits, SecretValue
 from structa_maestro.contracts.enums import (
     DocumentFormat,
@@ -117,7 +137,11 @@ from structa_maestro.validation.validator import DeterministicValidator
 __version__ = "0.1.0"
 
 __all__ = [
+    "CALIBRATION_ARTIFACT_VERSION",
     "CONTRACT_VERSION",
+    "DEFAULT_CALIBRATION_MIN_SAMPLES",
+    "MAX_CALIBRATION_ARTIFACT_BYTES",
+    "MIN_CALIBRATION_SAMPLES_FLOOR",
     "AnthropicLLMStrategy",
     "ArithmeticRule",
     "ArithmeticTerm",
@@ -131,6 +155,13 @@ __all__ = [
     "BatchOptions",
     "BatchProgress",
     "BatchSummary",
+    "BinningStrategy",
+    "CalibrationBin",
+    "CalibrationMetadata",
+    "CalibrationMethod",
+    "CalibrationMetrics",
+    "CalibrationModel",
+    "CalibrationSample",
     "ComparisonOperator",
     "ComparisonRule",
     "CompiledOutputSchema",
@@ -138,6 +169,8 @@ __all__ = [
     "ConditionalPresenceKind",
     "ConditionalPresenceRule",
     "ConfidenceAssessment",
+    "ConfidenceCalibrator",
+    "ConfidenceNormalizationResult",
     "ConfidenceNormalizer",
     "ConfigurationError",
     "ContractDeserializationError",
@@ -167,12 +200,15 @@ __all__ = [
     "FieldType",
     "GroupPresenceKind",
     "GroupPresenceRule",
+    "HistogramParameters",
     "InMemoryTelemetryObserver",
     "InputBudgetOverflowPolicy",
     "InputBudgetPolicy",
+    "IsotonicParameters",
     "IssueSeverity",
     "OpenAICompatibleLLMStrategy",
     "PipelineStage",
+    "PlattParameters",
     "PreparedDocument",
     "ProcessingStatus",
     "ProposedEvidence",
@@ -207,6 +243,8 @@ __all__ = [
     "bind_record",
     "bind_records",
     "compile_extraction_output_schema",
+    "compute_calibration_metrics",
     "extract",
     "extract_batch",
+    "fit_calibrator",
 ]

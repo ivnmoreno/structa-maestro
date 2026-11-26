@@ -90,3 +90,34 @@ def test_result_builder_warnings_alone_keep_completed_status() -> None:
     assert res.validation.status == ValidationStatus.VALID
     assert len(res.warnings) == 1
     assert res.errors == []
+
+
+def test_result_builder_calibrator_preserves_dimension_independence() -> None:
+    from structa_maestro import CalibrationMethod, CalibrationSample, fit_calibrator
+
+    samples = [CalibrationSample(raw_score=0.9, is_correct=(i % 3 != 0)) for i in range(12)] + [
+        CalibrationSample(raw_score=0.2, is_correct=(i % 4 == 0)) for i in range(12)
+    ]
+    cal = fit_calibrator(samples, method=CalibrationMethod.ISOTONIC)
+    builder = ResultBuilder(calibrator=cal)
+    out = StrategyOutput(
+        records=(
+            ProposedRecord(
+                fields={
+                    "name": ProposedField(
+                        value="Alice",
+                        confidence=0.9,
+                        confidence_method="llm",
+                    )
+                }
+            ),
+        )
+    )
+    res = builder.build(document=_doc(), schema=_schema(), strategy_output=out)
+    assert res.status == ProcessingStatus.COMPLETED
+    assert res.validation.status == ValidationStatus.VALID
+    conf = res.records[0].fields["name"].confidence
+    assert conf is not None
+    assert conf.calibrated is True
+    assert conf.method == "llm+calibrated:isotonic"
+    assert conf.value == round(cal.calibrate(0.9), 6)

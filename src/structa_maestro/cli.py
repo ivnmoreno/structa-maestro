@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import BinaryIO, TextIO
 
 from structa_maestro.batch import BatchOptions, discover_batch_documents
+from structa_maestro.confidence.calibration import CalibrationModel
 from structa_maestro.config import DocumentLimits, sanitize_message
 from structa_maestro.contracts.enums import ProcessingStatus, ValidationStatus
 from structa_maestro.documents.inputs import DocumentInput
@@ -150,6 +151,11 @@ def _add_common_extraction_args(parser: argparse.ArgumentParser) -> None:
         "--telemetry-json",
         default=None,
         help="Optional path to write privacy-safe TelemetrySummary JSON.",
+    )
+    parser.add_argument(
+        "--calibrator",
+        default=None,
+        help="Optional path to a saved Confidence CalibrationModel JSON artifact.",
     )
 
 
@@ -317,6 +323,9 @@ def run_cli(
                     "--filename is only supported when reading from stdin ('-')."
                 )
             schema = ExtractionSchema.from_json_file(args.schema)
+            calibrator = (
+                CalibrationModel.from_file(args.calibrator) if args.calibrator is not None else None
+            )
             strategy, limits = _build_strategy_and_limits(
                 args,
                 api_key_val=api_key_val,
@@ -339,6 +348,7 @@ def run_cli(
                 "strategy": strategy,
                 "limits": limits,
                 "document_id": args.document_id,
+                "calibrator": calibrator,
             }
             if telemetry_observer is not None:
                 extract_kwargs["observers"] = (telemetry_observer,)
@@ -414,6 +424,9 @@ def run_cli(
                 )
             batch_telemetry_observer = InMemoryTelemetryObserver()
         schema = ExtractionSchema.from_json_file(args.schema)
+        calibrator = (
+            CalibrationModel.from_file(args.calibrator) if args.calibrator is not None else None
+        )
         batch_options = BatchOptions(
             max_workers=args.max_workers,
             fail_fast=args.fail_fast,
@@ -436,6 +449,7 @@ def run_cli(
             "strategy": strategy,
             "limits": limits,
             "options": batch_options,
+            "calibrator": calibrator,
         }
         if batch_telemetry_observer is not None:
             batch_kwargs["observers"] = (batch_telemetry_observer,)
