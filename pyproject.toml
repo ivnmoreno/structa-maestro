@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "structa-maestro"
-version = "0.2.0"
+version = "0.2.1"
 description = "Structured data extraction engine transforming unstructured documents into validated, traceable canonical records."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -43,6 +43,13 @@ dev = [
 
 [project.scripts]
 structa-maestro = "structa_maestro.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/ivnmoreno/structa-maestro"
+Repository = "https://github.com/ivnmoreno/structa-maestro"
+Documentation = "https://github.com/ivnmoreno/structa-maestro/blob/main/docs/api.md"
+Changelog = "https://github.com/ivnmoreno/structa-maestro/blob/main/CHANGELOG.md"
+Issues = "https://github.com/ivnmoreno/structa-maestro/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/structa_maestro"]

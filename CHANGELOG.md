@@ -6,6 +6,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-27
+
+### Changed
+- **PyPI Project Page & README Polish**:
+  - Added `[project.urls]` (`Homepage`, `Repository`, `Documentation`, `Changelog`, `Issues`) to `pyproject.toml` so PyPI sidebar links populate cleanly.
+  - Added PyPI version badge to `README.md`, converted all relative repository links to absolute GitHub URLs so links work on both GitHub and PyPI, and replaced GitHub-only `mermaid` and `[!...]` alert syntax in `README.md` with universally rendered plain-text architecture flow and bold callouts.
+
 ## [0.2.0] - 2026-11-26
 
 ### Added

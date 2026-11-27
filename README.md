@@ -1,14 +1,15 @@
 # structa-maestro
 
+[![PyPI version](https://img.shields.io/pypi/v/structa-maestro.svg)](https://pypi.org/project/structa-maestro/)
 [![CI](https://github.com/ivnmoreno/structa-maestro/actions/workflows/ci.yml/badge.svg)](https://github.com/ivnmoreno/structa-maestro/actions/workflows/ci.yml)
 [![Formal Assurance](https://github.com/ivnmoreno/structa-maestro/actions/workflows/formal-assurance.yml/badge.svg)](https://github.com/ivnmoreno/structa-maestro/actions/workflows/formal-assurance.yml)
 [![Security](https://github.com/ivnmoreno/structa-maestro/actions/workflows/security.yml/badge.svg)](https://github.com/ivnmoreno/structa-maestro/actions/workflows/security.yml)
 [![Evaluation](https://github.com/ivnmoreno/structa-maestro/actions/workflows/evaluation.yml/badge.svg)](https://github.com/ivnmoreno/structa-maestro/actions/workflows/evaluation.yml)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/ivnmoreno/structa-maestro/blob/main/LICENSE)
 [![Code Style: Ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
 [![Type Checked: mypy](https://img.shields.io/badge/type%20checked-mypy-blue.svg)](https://mypy-lang.org/)
-[![Formal Verification: Lean 4](https://img.shields.io/badge/formal%20verification-Lean%204-blueviolet.svg)](docs/formal-assurance.md)
+[![Formal Verification: Lean 4](https://img.shields.io/badge/formal%20verification-Lean%204-blueviolet.svg)](https://github.com/ivnmoreno/structa-maestro/blob/main/docs/formal-assurance.md)
 [![Commitizen friendly](https://img.shields.io/badge/commitizen-friendly-brightgreen.svg)](https://commitizen-tools.github.io/commitizen/)
 
 **Structured Data Extraction Engine** — a reusable, stateless Python library (`structa_maestro`) with a minimal thin CLI (`structa-maestro`) that transforms unstructured documents (`TXT`, text-based `PDF`, `DOCX`, `HTML`, `Markdown`, and `EML`) into **validated, schema-conforming, provenance-backed canonical records** using only four pure-Python runtime dependencies (`pydantic`, `pypdf`, `python-docx`, `httpx`).
@@ -31,19 +32,26 @@ Unstructured business documents (invoices, contracts, employment records, applic
 | **Validation** | Does the record satisfy schema & cross-field rules? | Deterministic non-coercing validator (`valid` / `invalid` / `not_validated`) |
 | **Processing status** | Did the extraction pipeline complete? | `completed` / `partial` / `failed`, strictly independent of schema validity |
 
-```mermaid
-flowchart LR
-    In["Document (File / Bytes / Text / Stream) + ExtractionSchema"] --> Parse["Hardened Parsers (TXT, PDF, DOCX, HTML, MD, EML)"]
-    Parse --> Strat["Extraction Strategy (OpenAI / Anthropic / Gemini / Deterministic)"]
-    Strat --> Verify["Provenance + Confidence + Deterministic Validation"]
-    Verify --> Contract["Canonical Output Record Contract v1.0"]
-    Contract --> Bind["Optional Strict Typed Binding (Pydantic v2)"]
-    Verify -. "zero-PII events" .-> Obs["Observability Hooks (Sync / Async)"]
-    Formal["Lean 4 Formal Assurance (Dev/CI Only)"] -. "134 proofs + conformance" .-> Contract
+```text
+Document (File / Bytes / Text / Stream) + ExtractionSchema
+  │
+  ▼
+Hardened Parsers (TXT, PDF, DOCX, HTML, MD, EML)
+  │
+  ▼
+Extraction Strategy (OpenAI / Anthropic / Gemini / Deterministic)
+  │
+  ▼  [Strategy-to-Contract Firewall]
+Provenance + Confidence + Deterministic Validation ──(zero-PII events)──▶ Observability Hooks (Sync / Async)
+  │
+  ▼
+Canonical Output Record Contract v1.0 ◀──(134 Lean 4 proofs + conformance)── Formal Assurance (Dev/CI Only)
+  │
+  ▼  (opt-in, read-only)
+Strict Typed Binding (Pydantic v2) & Stateless Human Review (plan_review / apply_review)
 ```
 
-> [!IMPORTANT]
-> **Explicit Scope Boundaries**: `structa-maestro` is a focused structured extraction engine — **not** an OCR engine (image-only PDFs report `no_extractable_text`), **not** a RAG/vector/embedding search platform, and **not** a database-backed workflow server or multi-provider router.
+> **Important — Explicit Scope Boundaries**: `structa-maestro` is a focused structured extraction engine — **not** an OCR engine (image-only PDFs report `no_extractable_text`), **not** a RAG/vector/embedding search platform, and **not** a database-backed workflow server or multi-provider router.
 
 ---
 
@@ -93,8 +101,7 @@ source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
-> [!NOTE]
-> Installing `structa-maestro` requires **zero Lean tooling** and installs only four pure-Python packages (`pydantic`, `pypdf`, `python-docx`, `httpx`).
+> **Note**: Installing `structa-maestro` requires **zero Lean tooling** and installs only four pure-Python packages (`pydantic`, `pypdf`, `python-docx`, `httpx`).
 
 ---
 
@@ -179,8 +186,7 @@ except RecordBindingError as exc:
     print(result.status, result.validation.status, exc)
 ```
 
-> [!TIP]
-> For multi-record `partial` extractions, pass `only_valid=True` to `bind_records(result, Invoice, only_valid=True)` to materialize only `completed` + `valid` records while preserving full provenance, confidence, and diagnostics on `ExtractionResult`.
+> **Tip**: For multi-record `partial` extractions, pass `only_valid=True` to `bind_records(result, Invoice, only_valid=True)` to materialize only `completed` + `valid` records while preserving full provenance, confidence, and diagnostics on `ExtractionResult`.
 
 ### Native Asyncio Extraction (`aextract`, `aextract_batch`, FastAPI)
 
@@ -253,25 +259,25 @@ structa-maestro extract-batch ./invoices/ --schema invoice_schema.json \
 
 ## Runnable Offline Examples
 
-All 15 scripts under [examples/](examples/) execute completely offline (zero API keys required) and are verified continuously in CI:
+All 15 scripts under [examples/](https://github.com/ivnmoreno/structa-maestro/tree/main/examples) execute completely offline (zero API keys required) and are verified continuously in CI:
 
 | Example Script | Capability Demonstrated |
 | --- | --- |
-| [basic_invoice_extraction.py](examples/basic_invoice_extraction.py) | End-to-end single-record extraction, provenance, confidence, and Contract `v1.0` JSON |
-| [multi_record_extraction.py](examples/multi_record_extraction.py) | Multi-record extraction (`cardinality="multiple"`) with per-record validation |
-| [custom_strategy_example.py](examples/custom_strategy_example.py) | Implementing a custom `ExtractionStrategy` behind the Strategy-to-Contract Firewall |
-| [hardened_llm_strategy_example.py](examples/hardened_llm_strategy_example.py) | Strict `json_schema`, fallback, bounded retries, `InputBudgetPolicy`, and delimiter neutralization |
-| [anthropic_strategy_example.py](examples/anthropic_strategy_example.py) | Sync & async `AnthropicLLMStrategy` forced `tool_use` + token telemetry over `httpx.MockTransport` |
-| [gemini_strategy_example.py](examples/gemini_strategy_example.py) | Sync & async `GeminiLLMStrategy` strict `responseJsonSchema` + `usageMetadata` telemetry over `httpx.MockTransport` |
-| [cross_field_validation_example.py](examples/cross_field_validation_example.py) | Declarative comparison, exact `Decimal` arithmetic balance, conditional & group rules |
-| [batch_extraction_example.py](examples/batch_extraction_example.py) | Stateless concurrent `extract_batch(...)`, `fail_fast`, `BatchSummary`, and JSONL export |
-| [in_memory_extraction_example.py](examples/in_memory_extraction_example.py) | Zero-temp-file `DocumentInput.from_bytes`, `from_text`, and `from_stream` extraction |
-| [pydantic_schema_example.py](examples/pydantic_schema_example.py) | `ExtractionSchema.from_pydantic`, JSON export, and strict `bind_record` / `bind_records` |
-| [async_extraction_example.py](examples/async_extraction_example.py) | Native asyncio `aextract`, `aextract_batch`, pooled `async with`, and concurrency bounds |
-| [observability_telemetry_example.py](examples/observability_telemetry_example.py) | `InMemoryTelemetryObserver`, `StructuredLoggingObserver`, stage timings, and token rollups |
-| [multiformat_extraction_example.py](examples/multiformat_extraction_example.py) | Consistent extraction & provenance across HTML, Markdown, and RFC 5322 EML documents |
-| [confidence_calibration_example.py](examples/confidence_calibration_example.py) | Zero-dependency empirical calibration (`fit_calibrator`), ECE/Brier reduction, artifact persistence, and `calibrated: false` vs. `true` |
-| [human_review_workflow_example.py](examples/human_review_workflow_example.py) | Stateless `plan_review` triage, immutable `apply_review` corrections + re-validation, privacy-safe `ReviewAudit`, and `bind_records` |
+| [basic_invoice_extraction.py](https://github.com/ivnmoreno/structa-maestro/blob/main/examples/basic_invoice_extraction.py) | End-to-end single-record extraction, provenance, confidence, and Contract `v1.0` JSON |
+| [multi_record_extraction.py](https://github.com/ivnmoreno/structa-maestro/blob/main/examples/multi_record_extraction.py) | Multi-record extraction (`cardinality="multiple"`) with per-record validation |
+| [custom_strategy_example.py](https://github.com/ivnmoreno/structa-maestro/blob/main/examples/custom_strategy_example.py) | Implementing a custom `ExtractionStrategy` behind the Strategy-to-Contract Firewall |
+| [hardened_llm_strategy_example.py](https://github.com/ivnmoreno/structa-maestro/blob/main/examples/hardened_llm_strategy_example.py) | Strict `json_schema`, fallback, bounded retries, `InputBudgetPolicy`, and delimiter neutralization |
+| [anthropic_strategy_example.py](https://github.com/ivnmoreno/structa-maestro/blob/main/examples/anthropic_strategy_example.py) | Sync & async `AnthropicLLMStrategy` forced `tool_use` + token telemetry over `httpx.MockTransport` |
+| [gemini_strategy_example.py](https://github.com/ivnmoreno/structa-maestro/blob/main/examples/gemini_strategy_example.py) | Sync & async `GeminiLLMStrategy` strict `responseJsonSchema` + `usageMetadata` telemetry over `httpx.MockTransport` |
+| [cross_field_validation_example.py](https://github.com/ivnmoreno/structa-maestro/blob/main/examples/cross_field_validation_example.py) | Declarative comparison, exact `Decimal` arithmetic balance, conditional & group rules |
+| [batch_extraction_example.py](https://github.com/ivnmoreno/structa-maestro/blob/main/examples/batch_extraction_example.py) | Stateless concurrent `extract_batch(...)`, `fail_fast`, `BatchSummary`, and JSONL export |
+| [in_memory_extraction_example.py](https://github.com/ivnmoreno/structa-maestro/blob/main/examples/in_memory_extraction_example.py) | Zero-temp-file `DocumentInput.from_bytes`, `from_text`, and `from_stream` extraction |
+| [pydantic_schema_example.py](https://github.com/ivnmoreno/structa-maestro/blob/main/examples/pydantic_schema_example.py) | `ExtractionSchema.from_pydantic`, JSON export, and strict `bind_record` / `bind_records` |
+| [async_extraction_example.py](https://github.com/ivnmoreno/structa-maestro/blob/main/examples/async_extraction_example.py) | Native asyncio `aextract`, `aextract_batch`, pooled `async with`, and concurrency bounds |
+| [observability_telemetry_example.py](https://github.com/ivnmoreno/structa-maestro/blob/main/examples/observability_telemetry_example.py) | `InMemoryTelemetryObserver`, `StructuredLoggingObserver`, stage timings, and token rollups |
+| [multiformat_extraction_example.py](https://github.com/ivnmoreno/structa-maestro/blob/main/examples/multiformat_extraction_example.py) | Consistent extraction & provenance across HTML, Markdown, and RFC 5322 EML documents |
+| [confidence_calibration_example.py](https://github.com/ivnmoreno/structa-maestro/blob/main/examples/confidence_calibration_example.py) | Zero-dependency empirical calibration (`fit_calibrator`), ECE/Brier reduction, artifact persistence, and `calibrated: false` vs. `true` |
+| [human_review_workflow_example.py](https://github.com/ivnmoreno/structa-maestro/blob/main/examples/human_review_workflow_example.py) | Stateless `plan_review` triage, immutable `apply_review` corrections + re-validation, privacy-safe `ReviewAudit`, and `bind_records` |
 
 ---
 
@@ -292,7 +298,7 @@ Every extraction returns an immutable `ExtractionResult` supporting lossless rou
 
 ## Current Limitations
 
-> [!WARNING]
+> **Warning**:
 > - **Confidence calibration requires domain-representative data**: By default (`calibrator=None`), confidence scores report `"calibrated": false` and MUST NOT be interpreted as statistical probabilities. Even when an offline empirical `CalibrationModel` sets `"calibrated": true`, calibration reflects empirical accuracy on its fitting distribution only and never implies schema validity or factual truth.
 > - **External model data transmission**: `OpenAICompatibleLLMStrategy`, `AsyncOpenAICompatibleLLMStrategy`, `AnthropicLLMStrategy`, `AsyncAnthropicLLMStrategy`, `GeminiLLMStrategy`, and `AsyncGeminiLLMStrategy` transmit prepared document text to the configured endpoint; review provider data-handling policies before processing confidential documents.
 
@@ -310,7 +316,7 @@ python -m evals validate-dataset
 python -m evals run --strategy deterministic --baseline evals/baselines/deterministic_v2.0.0.json
 ```
 
-See [docs/development.md](docs/development.md) for subset filtering, repeated-trial (`--trials`) distributions, differential strategy comparison (`python -m evals diff`), and on-demand live-model benchmarking.
+See [docs/development.md](https://github.com/ivnmoreno/structa-maestro/blob/main/docs/development.md) for subset filtering, repeated-trial (`--trials`) distributions, differential strategy comparison (`python -m evals diff`), and on-demand live-model benchmarking.
 
 ---
 
@@ -323,19 +329,19 @@ cd formal && lake build && lake test
 cd .. && STRUCTA_REQUIRE_LEAN_ORACLE=1 pytest tests/conformance/ -v
 ```
 
-See [Formal Assurance Guide](docs/formal-assurance.md) for the 4-layer assurance diagram, complete assurance matrix, formal model scope, assumptions, and explicit non-goals.
+See [Formal Assurance Guide](https://github.com/ivnmoreno/structa-maestro/blob/main/docs/formal-assurance.md) for the 4-layer assurance diagram, complete assurance matrix, formal model scope, assumptions, and explicit non-goals.
 
 ---
 
 ## Further Documentation
 
-- [Architecture](docs/architecture.md)
-- [Formal Assurance Layer](docs/formal-assurance.md)
-- [Public API & CLI Reference](docs/api.md)
-- [Configuration & Security](docs/configuration.md)
-- [Development & Quality Gates](docs/development.md)
-- [Testing Strategy & CI Rules](docs/TESTING.md)
-- [Contributing Guide](CONTRIBUTING.md)
-- [Code of Conduct](CODE_OF_CONDUCT.md)
-- [Security Policy](SECURITY.md)
-- [Changelog](CHANGELOG.md)
+- [Architecture](https://github.com/ivnmoreno/structa-maestro/blob/main/docs/architecture.md)
+- [Formal Assurance Layer](https://github.com/ivnmoreno/structa-maestro/blob/main/docs/formal-assurance.md)
+- [Public API & CLI Reference](https://github.com/ivnmoreno/structa-maestro/blob/main/docs/api.md)
+- [Configuration & Security](https://github.com/ivnmoreno/structa-maestro/blob/main/docs/configuration.md)
+- [Development & Quality Gates](https://github.com/ivnmoreno/structa-maestro/blob/main/docs/development.md)
+- [Testing Strategy & CI Rules](https://github.com/ivnmoreno/structa-maestro/blob/main/docs/TESTING.md)
+- [Contributing Guide](https://github.com/ivnmoreno/structa-maestro/blob/main/CONTRIBUTING.md)
+- [Code of Conduct](https://github.com/ivnmoreno/structa-maestro/blob/main/CODE_OF_CONDUCT.md)
+- [Security Policy](https://github.com/ivnmoreno/structa-maestro/blob/main/SECURITY.md)
+- [Changelog](https://github.com/ivnmoreno/structa-maestro/blob/main/CHANGELOG.md)
