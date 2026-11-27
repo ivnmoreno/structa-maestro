@@ -93,3 +93,66 @@ jobs:
           twine check dist/*
       - name: Publish via OIDC Trusted Publisher
         uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+
+  github-release:
+    name: Create GitHub Release (Tag Releases Only)
+    needs: [qualify, formal-assurance, publish]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-distributions
+          path: dist/
+      - name: Generate distribution SHA-256 checksums
+        run: |
+          ls -la dist/
+          (cd dist && sha256sum *.whl *.tar.gz > SHA256SUMS.txt)
+          cat dist/SHA256SUMS.txt
+      - name: Extract CHANGELOG release notes
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          python3 - <<'PY'
+          import os
+          import pathlib
+          import re
+
+          tag = os.environ["TAG_NAME"]
+          version = tag.removeprefix("v")
+          changelog = pathlib.Path("CHANGELOG.md").read_text(encoding="utf-8")
+          pattern = re.compile(
+              rf"^## \[{re.escape(version)}\][^\n]*\n(.*?)(?=^## \[|\Z)",
+              re.MULTILINE | re.DOTALL,
+          )
+          match = pattern.search(changelog)
+          parts = [f"```bash\npip install structa-maestro=={version}\n```"]
+          if match and match.group(1).strip():
+              parts.append(match.group(1).strip())
+          parts.append(
+              f"**PyPI**: https://pypi.org/project/structa-maestro/{version}/  \n"
+              "**Full Changelog**: https://github.com/ivnmoreno/structa-maestro/blob/main/CHANGELOG.md"
+          )
+          pathlib.Path("release-notes.md").write_text("\n\n".join(parts) + "\n", encoding="utf-8")
+          PY
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          EXTRA_ARGS=()
+          if [[ "$TAG_NAME" == *-* ]]; then
+            EXTRA_ARGS+=(--prerelease)
+          fi
+          if gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            gh release upload "$TAG_NAME" dist/* --clobber
+          else
+            gh release create "$TAG_NAME" dist/* \
+              --verify-tag \
+              --title "$TAG_NAME" \
+              --notes-file release-notes.md \
+              "${EXTRA_ARGS[@]}"
+          fi
